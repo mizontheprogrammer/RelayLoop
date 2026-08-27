@@ -83,4 +83,22 @@ public sealed class EditorHistoryTests
         Assert.False(history.CanUndo);
         Assert.False(history.CanRedo);
     }
+
+    [Fact]
+    public void ClearAllEvents_IsOneUndoableEdit()
+    {
+        var original = TestMacros.Create();
+        var history = new EditorHistory<MacroDocument>(original, static document => document.DeepClone());
+        var cleared = original.DeepClone();
+        cleared.Events.Clear();
+
+        history.Push(cleared);
+
+        Assert.Empty(history.Current.Events);
+        Assert.Equal(1, history.UndoCount);
+        var restored = history.Undo();
+        Assert.Equal(original.Events.Select(static item => item.Kind), restored.Events.Select(static item => item.Kind));
+        Assert.Equal(original.Events.Select(static item => item.DelayMicroseconds), restored.Events.Select(static item => item.DelayMicroseconds));
+        Assert.Empty(history.Redo().Events);
+    }
 }

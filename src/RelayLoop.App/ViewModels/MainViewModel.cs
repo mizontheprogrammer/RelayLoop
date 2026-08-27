@@ -83,10 +83,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _closeInProgress;
     private bool _disposed;
     private bool _hasRunActivity;
+    private bool _activeDirectionalHoldPreset;
     private int _countdownValue;
     private int _repeatCount = 1;
     private int _liveEventCount;
     private double _playbackSpeed = 1;
+    private double _activePlaybackSpeed = 1;
     private double? _windowLeft;
     private double? _windowTop;
 
@@ -129,6 +131,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         UndoCommand = new RelayCommand(Undo, CanUndo);
         RedoCommand = new RelayCommand(Redo, CanRedo);
         DeleteEventCommand = new RelayCommand(DeleteSelectedEvent, CanEditSelectedEvent);
+        ClearAllEventsCommand = new RelayCommand(ClearAllEvents, CanClearAllEvents);
+        CreateDirectionalHoldPresetCommand = new RelayCommand(CreateDirectionalHoldPreset, CanUseFileCommands);
         MoveEventUpCommand = new RelayCommand(() => MoveSelectedEvent(-1), () => CanMoveSelectedEvent(-1));
         MoveEventDownCommand = new RelayCommand(() => MoveSelectedEvent(1), () => CanMoveSelectedEvent(1));
 
@@ -175,6 +179,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public RelayCommand UndoCommand { get; }
     public RelayCommand RedoCommand { get; }
     public RelayCommand DeleteEventCommand { get; }
+    public RelayCommand ClearAllEventsCommand { get; }
+    public RelayCommand CreateDirectionalHoldPresetCommand { get; }
     public RelayCommand MoveEventUpCommand { get; }
     public RelayCommand MoveEventDownCommand { get; }
 
@@ -321,6 +327,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string StatusText => _stateMachine.State switch
     {
         AppState.Recording => "Recording",
+        AppState.Playing when IsDirectionalHoldPlayback => GetDirectionalHoldTimer().Phase == DirectionalHoldPhase.HoldD
+            ? "D + LM1"
+            : "A + LM1",
         AppState.Playing => "Playing",
         AppState.Stopping => "Stopping",
         AppState.Error => "Error",
@@ -329,7 +338,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _ => "Ready",
     };
 
-    public string ElapsedText => $"{FormatElapsed(_activityStopwatch.Elapsed)} · {EventCount:N0} events";
+    public string ElapsedText => IsDirectionalHoldPlayback
+        ? $"{FormatDirectionalHoldRemaining(GetDirectionalHoldTimer().Remaining)} left"
+        : $"{FormatElapsed(_activityStopwatch.Elapsed)} · {EventCount:N0} events";
+
+    public bool IsDirectionalHoldPlayback => IsPlaying && _activeDirectionalHoldPreset;
+
+    public string ActiveHoldText => IsDirectionalHoldPlayback
+        ? GetDirectionalHoldTimer().Phase == DirectionalHoldPhase.HoldD ? "D + LM1" : "A + LM1"
+        : "—";
+
+    public string PhaseRemainingText => IsDirectionalHoldPlayback
+        ? FormatDirectionalHoldRemaining(GetDirectionalHoldTimer().Remaining)
+        : "—";
 
     public Brush StateBrush => GetBrush(_stateMachine.State switch
     {
@@ -762,12 +783,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        _activeDirectionalHoldPreset = DirectionalHoldPreset.IsMatch(snapshot.Events);
+        _activePlaybackSpeed = PlaybackSpeed;
         _hasRunActivity = true;
         _activityStopwatch.Restart();
         _loopText = ContinuousPlayback ? "1 / ∞" : $"1 / {RepeatCount:N0}";
         _remainingText = ContinuousPlayback
             ? "Until stopped"
-            : FormatDuration(PlaybackPlanner.GetTotalDuration(snapshot, new RelayLoop.Core.PlaybackOptions(PlaybackSpeed, RepeatCount, false)) ?? TimeSpan.Zero);
+            : FormatDuration(PlaybackPlanner.GetTotalDuration(snapshot, new RelayLoop.Core.PlaybackOptions(_activePlaybackSpeed, RepeatCount, false)) ?? TimeSpan.Zero);
         ClearBanner();
         RefreshAll();
 
@@ -775,7 +798,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             await _playback.PlayAsync(snapshot.Events, new ServicePlaybackOptions
             {
-                Speed = PlaybackSpeed,
+                Speed = _activePlaybackSpeed,
                 RepeatCount = RepeatCount,
                 Continuous = ContinuousPlayback,
             }).ConfigureAwait(true);
@@ -792,6 +815,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         finally
         {
             _activityStopwatch.Stop();
+            _activeDirectionalHoldPreset = false;
             if (_stateMachine.State == AppState.Playing)
             {
                 _stateMachine.TryRequestStop(out _);
@@ -1012,6 +1036,57 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedEvent = index < Events.Count ? Events[index] : Events.LastOrDefault();
         MarkEdited();
     }
+
+    private void ClearAllEvents()
+    {
+        if (Events.Count == 0 || !_dialogs.ConfirmClearAllEvents(Events.Count))
+        {
+            return;
+        }
+
+        _document = CreateDocumentSnapshot();
+        _document.Events.Clear();
+        _history.Push(_document);
+        RebuildRows(_document);
+        SelectedEvent = null;
+        MarkEdited();
+    }
+
+    private void CreateDirectionalHoldPreset()
+    {
+        var target = SelectedEvent is not null && IsMousePositionEvent(SelectedEvent.Kind)
+            ? SelectedEvent
+            : Events.LastOrDefault(static item => IsMousePositionEvent(item.Kind));
+        if (target is null)
+        {
+            _dialogs.ShowInformation(
+                "RelayLoop - choose an LM1 target",
+                "Record or select a mouse event first. RelayLoop uses that event's screen position for the two-minute LM1 holds.");
+            return;
+        }
+
+        if (Events.Count > 0 && !_dialogs.ConfirmReplaceWithDirectionalHoldPreset(Events.Count))
+        {
+            return;
+        }
+
+        _document = CreateDocumentSnapshot();
+        _document.Events = DirectionalHoldPreset.CreateEvents(target.X, target.Y);
+        _history.Push(_document);
+        RebuildRows(_document);
+        SelectedEvent = Events.FirstOrDefault();
+        PlaybackSpeed = 1;
+        RepeatCount = 1;
+        ContinuousPlayback = true;
+        ClearBanner();
+        MarkEdited();
+    }
+
+    private static bool IsMousePositionEvent(MacroEventKind kind) => kind is
+        MacroEventKind.MouseMove or
+        MacroEventKind.MouseButtonDown or
+        MacroEventKind.MouseButtonUp or
+        MacroEventKind.MouseWheel;
 
     private void MoveSelectedEvent(int offset)
     {
@@ -1406,6 +1481,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         OnPropertyChanged(nameof(ElapsedText));
         OnPropertyChanged(nameof(EventCount));
+        if (IsDirectionalHoldPlayback)
+        {
+            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(nameof(ActiveHoldText));
+            OnPropertyChanged(nameof(PhaseRemainingText));
+        }
     }
 
     private async Task SaveLiveRecoveryAsync()
@@ -1585,6 +1666,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StateBrush));
         OnPropertyChanged(nameof(ElapsedText));
+        OnPropertyChanged(nameof(IsDirectionalHoldPlayback));
+        OnPropertyChanged(nameof(ActiveHoldText));
+        OnPropertyChanged(nameof(PhaseRemainingText));
         OnPropertyChanged(nameof(RecordAutomationName));
         OnPropertyChanged(nameof(PlayAutomationName));
         RefreshCommands();
@@ -1617,16 +1701,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         UndoCommand.RaiseCanExecuteChanged();
         RedoCommand.RaiseCanExecuteChanged();
         DeleteEventCommand.RaiseCanExecuteChanged();
+        ClearAllEventsCommand.RaiseCanExecuteChanged();
+        CreateDirectionalHoldPresetCommand.RaiseCanExecuteChanged();
         MoveEventUpCommand.RaiseCanExecuteChanged();
         MoveEventDownCommand.RaiseCanExecuteChanged();
     }
 
     private bool CanUseFileCommands() => _initialized && !IsBusy && _stateMachine.State == AppState.Idle;
-    private bool CanSave() => CanUseFileCommands() && Events.Count > 0;
+    private bool CanSave() => CanUseFileCommands() && (_isDirty || Events.Count > 0);
     private bool CanRecord() => _initialized && !IsCountingDown && _stateMachine.State is AppState.Idle or AppState.Recording;
     private bool CanPlay() => CanUseFileCommands() && Events.Any(static row => row.IsEnabled) && _stopRegistration is not null;
     private bool CanStop() => IsCountingDown || _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Stopping;
     private bool CanExport() => CanUseFileCommands() && Events.Count > 0;
+    private bool CanClearAllEvents() => CanUseFileCommands() && Events.Count > 0;
     private bool CanUndo() => CanUseFileCommands() && _history.CanUndo;
     private bool CanRedo() => CanUseFileCommands() && _history.CanRedo;
     private bool CanEditSelectedEvent() => CanUseFileCommands() && SelectedEvent is not null;
@@ -1858,6 +1945,15 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             throw new FormatException("Record, play, and emergency stop must use three different shortcuts.");
         }
+    }
+
+    private DirectionalHoldTimer GetDirectionalHoldTimer() =>
+        DirectionalHoldPreset.GetTimer(_activityStopwatch.Elapsed, _activePlaybackSpeed);
+
+    private static string FormatDirectionalHoldRemaining(TimeSpan remaining)
+    {
+        var totalSeconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
+        return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
     }
 
     private static string FormatElapsed(TimeSpan value) =>

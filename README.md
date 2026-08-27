@@ -33,6 +33,12 @@ The compact toolbar is ordered as follows:
 - Settings controls the theme, always-on-top mode, optional three-second countdown, continuous playback, and global hotkeys.
 - The chevron or `Ctrl+E` opens the event inspector and activity panel.
 
+Expanded inspector tools:
+
+- **D/A Hold** replaces the current event list with a repeating four-minute cycle: hold `D + LM1` for two minutes, release both, hold `A + LM1` for two minutes, release both, then repeat until stopped. It uses the selected or last recorded mouse event as the LM1 screen position, switches playback to `1x` continuous mode, and shows a live phase countdown.
+- **Clear all** removes the complete event list after confirmation. `Ctrl+Z` restores the entire list as one undo step; `Ctrl+Shift+Delete` is the keyboard shortcut.
+- Emergency Stop (`Esc` or the configured global stop hotkey) cancels either hold immediately and releases the key and mouse button tracked by playback.
+
 Keyboard shortcuts inside the window:
 
 | Action | Shortcut |

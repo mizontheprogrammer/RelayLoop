@@ -62,6 +62,7 @@
     <KeyBinding Key="F3" Command="{Binding PlayCommand}" />
     <KeyBinding Key="Escape" Command="{Binding StopCommand}" />
     <KeyBinding Key="E" Modifiers="Control" Command="{Binding ToggleExpandedCommand}" />
+    <KeyBinding Key="Delete" Modifiers="Control+Shift" Command="{Binding ClearAllEventsCommand}" />
   </Window.InputBindings>
 
   <Grid Background="{DynamicResource WindowBrush}" KeyboardNavigation.TabNavigation="Cycle">
@@ -266,6 +267,13 @@
           <DockPanel Margin="0,0,0,6">
             <TextBlock Text="Event inspector" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="D/A Hold" Command="{Binding CreateDirectionalHoldPresetCommand}"
+                      Padding="8,4" Margin="0,0,4,0"
+                      ToolTip="Replace events with a repeating 2-minute D + LM1 / A + LM1 cycle at the selected or last recorded mouse position"
+                      AutomationProperties.Name="Create repeating D plus LM1 and A plus LM1 two-minute cycle" />
+              <Button Content="Clear all" Command="{Binding ClearAllEventsCommand}"
+                      Padding="8,4" Margin="0,0,6,0" ToolTip="Clear the whole recording (Ctrl+Shift+Delete); Ctrl+Z restores it"
+                      AutomationProperties.Name="Clear all recorded events" />
               <Button Style="{StaticResource MiniButtonStyle}" Command="{Binding UndoCommand}" ToolTip="Undo (Ctrl+Z)"
                       AutomationProperties.Name="Undo editor change">
                 <Path Data="{StaticResource IconUndo}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform" />
@@ -333,6 +341,17 @@
                 <StackPanel Margin="0,0,0,8">
                   <TextBlock Text="Remaining" Foreground="{DynamicResource TextMutedBrush}" FontSize="11" />
                   <TextBlock Text="{Binding RemainingText}" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Margin="0,0,8,8"
+                            Visibility="{Binding IsDirectionalHoldPlayback, Converter={StaticResource BooleanToVisibilityConverter}}">
+                  <TextBlock Text="Current hold" Foreground="{DynamicResource TextMutedBrush}" FontSize="11" />
+                  <TextBlock Text="{Binding ActiveHoldText}" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+                <StackPanel Margin="0,0,0,8"
+                            Visibility="{Binding IsDirectionalHoldPlayback, Converter={StaticResource BooleanToVisibilityConverter}}">
+                  <TextBlock Text="Time left" Foreground="{DynamicResource TextMutedBrush}" FontSize="11" />
+                  <TextBlock Text="{Binding PhaseRemainingText}" FontFamily="Cascadia Mono, Consolas"
+                             FontSize="16" FontWeight="SemiBold" />
                 </StackPanel>
               </UniformGrid>
               <Separator Margin="0,4,0,10" />

@@ -14,8 +14,11 @@ public sealed class SettingsService
 
     public SettingsService(string? baseDirectory = null)
     {
-        BaseDirectory = baseDirectory ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RelayLoop");
+        var environmentDirectory = Environment.GetEnvironmentVariable("RELAYLOOP_DATA_DIR");
+        BaseDirectory = baseDirectory ??
+            (!string.IsNullOrWhiteSpace(environmentDirectory)
+                ? Path.GetFullPath(environmentDirectory)
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RelayLoop"));
         SettingsPath = Path.Combine(BaseDirectory, "settings.json");
     }
 

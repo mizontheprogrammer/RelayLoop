@@ -17,6 +17,8 @@ public interface IUserDialogService
     string? ChooseMacroToSave(string suggestedName, string? initialDirectory = null);
     string? ChooseRunnerDestination(string suggestedName, string? initialDirectory = null);
     SaveChangesChoice ConfirmUnsavedChanges(string macroName);
+    bool ConfirmClearAllEvents(int eventCount);
+    bool ConfirmReplaceWithDirectionalHoldPreset(int eventCount);
     bool ConfirmRecovery(DateTime lastWriteTime);
     bool ConfirmLayoutMismatch(string warning);
     void ShowInformation(string title, string message);
@@ -84,6 +86,23 @@ public sealed class UserDialogService : IUserDialogService
             _ => SaveChangesChoice.Cancel
         };
     }
+
+    public bool ConfirmClearAllEvents(int eventCount) => MessageBox.Show(
+        Application.Current.MainWindow,
+        $"Clear all {eventCount:N0} recorded events?\n\nYou can restore them immediately with Ctrl+Z.",
+        "RelayLoop - clear recording",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    public bool ConfirmReplaceWithDirectionalHoldPreset(int eventCount) => MessageBox.Show(
+        Application.Current.MainWindow,
+        $"Replace all {eventCount:N0} current events with the repeating D/A + LM1 two-minute cycle?\n\n" +
+        "You can restore the current events immediately with Ctrl+Z.",
+        "RelayLoop - create D/A hold cycle",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Question,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
 
     public bool ConfirmLayoutMismatch(string warning) => MessageBox.Show(
         Application.Current.MainWindow,
