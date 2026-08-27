@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RelayLoop.Core", "src\RelayLoop.Core\RelayLoop.Core.csproj", "{66EC7C20-74CD-48CD-9D4D-070DF56C636B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RelayLoop.App", "src\RelayLoop.App\RelayLoop.App.csproj", "{1B2701A3-9822-4C33-ACF0-0459423AC01E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RelayLoop.Runner", "src\RelayLoop.Runner\RelayLoop.Runner.csproj", "{39A279E1-668E-4874-B8F2-EBA8BD26356A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RelayLoop.Core.Tests", "tests\RelayLoop.Core.Tests\RelayLoop.Core.Tests.csproj", "{425DE5E6-4F55-4ED3-BF5D-713969DFD0EF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RelayLoop.IntegrationTests", "tests\RelayLoop.IntegrationTests\RelayLoop.IntegrationTests.csproj", "{A5BB7DF2-8DF3-41B2-A210-FE9E50F91FD6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{66EC7C20-74CD-48CD-9D4D-070DF56C636B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{66EC7C20-74CD-48CD-9D4D-070DF56C636B}.Debug|x64.Build.0 = Debug|Any CPU
+		{66EC7C20-74CD-48CD-9D4D-070DF56C636B}.Release|x64.ActiveCfg = Release|Any CPU
+		{66EC7C20-74CD-48CD-9D4D-070DF56C636B}.Release|x64.Build.0 = Release|Any CPU
+		{1B2701A3-9822-4C33-ACF0-0459423AC01E}.Debug|x64.ActiveCfg = Debug|x64
+		{1B2701A3-9822-4C33-ACF0-0459423AC01E}.Debug|x64.Build.0 = Debug|x64
+		{1B2701A3-9822-4C33-ACF0-0459423AC01E}.Release|x64.ActiveCfg = Release|x64
+		{1B2701A3-9822-4C33-ACF0-0459423AC01E}.Release|x64.Build.0 = Release|x64
+		{39A279E1-668E-4874-B8F2-EBA8BD26356A}.Debug|x64.ActiveCfg = Debug|x64
+		{39A279E1-668E-4874-B8F2-EBA8BD26356A}.Debug|x64.Build.0 = Debug|x64
+		{39A279E1-668E-4874-B8F2-EBA8BD26356A}.Release|x64.ActiveCfg = Release|x64
+		{39A279E1-668E-4874-B8F2-EBA8BD26356A}.Release|x64.Build.0 = Release|x64
+		{425DE5E6-4F55-4ED3-BF5D-713969DFD0EF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{425DE5E6-4F55-4ED3-BF5D-713969DFD0EF}.Debug|x64.Build.0 = Debug|Any CPU
+		{425DE5E6-4F55-4ED3-BF5D-713969DFD0EF}.Release|x64.ActiveCfg = Release|Any CPU
+		{425DE5E6-4F55-4ED3-BF5D-713969DFD0EF}.Release|x64.Build.0 = Release|Any CPU
+		{A5BB7DF2-8DF3-41B2-A210-FE9E50F91FD6}.Debug|x64.ActiveCfg = Debug|x64
+		{A5BB7DF2-8DF3-41B2-A210-FE9E50F91FD6}.Debug|x64.Build.0 = Debug|x64
+		{A5BB7DF2-8DF3-41B2-A210-FE9E50F91FD6}.Release|x64.ActiveCfg = Release|x64
+		{A5BB7DF2-8DF3-41B2-A210-FE9E50F91FD6}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal
