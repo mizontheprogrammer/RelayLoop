@@ -19,6 +19,8 @@ public interface IUserDialogService
     SaveChangesChoice ConfirmUnsavedChanges(string macroName);
     bool ConfirmClearAllEvents(int eventCount);
     bool ConfirmReplaceWithDirectionalHoldPreset(int eventCount);
+    bool ConfirmOverwriteProfile(string profileName);
+    bool ConfirmDeleteProfile(string profileName);
     bool ConfirmRecovery(DateTime lastWriteTime);
     bool ConfirmLayoutMismatch(string warning);
     void ShowInformation(string title, string message);
@@ -102,6 +104,22 @@ public sealed class UserDialogService : IUserDialogService
         "RelayLoop - create D/A hold cycle",
         MessageBoxButton.YesNo,
         MessageBoxImage.Question,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    public bool ConfirmOverwriteProfile(string profileName) => MessageBox.Show(
+        Application.Current.MainWindow,
+        $"Replace the saved profile ‘{profileName}’ with the current macro and playback settings?",
+        "RelayLoop - replace profile",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Question,
+        MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    public bool ConfirmDeleteProfile(string profileName) => MessageBox.Show(
+        Application.Current.MainWindow,
+        $"Delete the saved profile ‘{profileName}’?\n\nThis does not delete the macro currently open in the editor.",
+        "RelayLoop - delete profile",
+        MessageBoxButton.YesNo,
+        MessageBoxImage.Warning,
         MessageBoxResult.No) == MessageBoxResult.Yes;
 
     public bool ConfirmLayoutMismatch(string warning) => MessageBox.Show(

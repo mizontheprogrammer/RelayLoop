@@ -323,7 +323,9 @@
         <Border Grid.Column="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="1" CornerRadius="8" Padding="12">
           <Grid>
-            <StackPanel Visibility="{Binding IsSettingsOpen, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+            <ScrollViewer Visibility="{Binding IsSettingsOpen, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                          VerticalScrollBarVisibility="Auto">
+            <StackPanel>
               <TextBlock Text="Activity" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10" />
               <UniformGrid Columns="2" Margin="0,0,0,8">
                 <StackPanel Margin="0,0,8,8">
@@ -355,6 +357,33 @@
                 </StackPanel>
               </UniformGrid>
               <Separator Margin="0,4,0,10" />
+              <TextBlock Text="Profiles" FontWeight="SemiBold" />
+              <TextBlock Text="Save the macro, playback settings, and mouse-lock choice together."
+                         TextWrapping="Wrap" Foreground="{DynamicResource TextMutedBrush}" FontSize="11" Margin="0,2,0,6" />
+              <ComboBox ItemsSource="{Binding Profiles}" Text="{Binding ProfileName, UpdateSourceTrigger=PropertyChanged}"
+                        IsEditable="True" IsTextSearchEnabled="False" Margin="0,0,0,6"
+                        IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBooleanConverter}}"
+                        AutomationProperties.Name="Profile name or saved profile" />
+              <UniformGrid Columns="3" Margin="0,0,0,7">
+                <Button Content="Save" Command="{Binding SaveProfileCommand}" Padding="7,4" Margin="0,0,3,0"
+                        AutomationProperties.Name="Save named profile" />
+                <Button Content="Load" Command="{Binding LoadProfileCommand}" Padding="7,4" Margin="2,0"
+                        AutomationProperties.Name="Load selected profile" />
+                <Button Content="Delete" Command="{Binding DeleteProfileCommand}" Padding="7,4" Margin="3,0,0,0"
+                        Foreground="{DynamicResource ErrorBrush}"
+                        AutomationProperties.Name="Delete selected profile" />
+              </UniformGrid>
+              <CheckBox IsChecked="{Binding LockMouseDuringDirectionalHold}"
+                        IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBooleanConverter}}"
+                        AutomationProperties.Name="Lock mouse at the LM1 target during D and A hold playback">
+                <TextBlock Text="Lock mouse at LM1 target during D/A hold" TextWrapping="Wrap" />
+              </CheckBox>
+              <TextBlock Text="{Binding MouseLockStatusText}" TextWrapping="Wrap"
+                         Foreground="{DynamicResource TextMutedBrush}" FontSize="11" Margin="20,2,0,0" />
+              <TextBlock Text="{Binding ProfileStatusText}" TextWrapping="Wrap"
+                         Foreground="{DynamicResource AccentBrush}" FontSize="11" Margin="0,6,0,0"
+                         AutomationProperties.LiveSetting="Polite" />
+              <Separator Margin="0,4,0,10" />
               <TextBlock Text="{Binding CurrentFileDisplay}" TextWrapping="Wrap" FontWeight="SemiBold" />
               <TextBlock Text="{Binding DisplayLayoutStatus}" TextWrapping="Wrap" Foreground="{DynamicResource TextMutedBrush}" Margin="0,4,0,0" />
               <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="6" Padding="9" Margin="0,12,0,0">
@@ -362,6 +391,7 @@
                            TextWrapping="Wrap" />
               </Border>
             </StackPanel>
+            </ScrollViewer>
 
             <ScrollViewer Visibility="{Binding IsSettingsOpen, Converter={StaticResource BooleanToVisibilityConverter}}"
                           VerticalScrollBarVisibility="Auto">

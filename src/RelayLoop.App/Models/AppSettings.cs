@@ -15,7 +15,7 @@ public sealed class HotkeySetting
 
 public sealed class AppSettings
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     public const uint DefaultHotkeyModifiers = 0x0001 | 0x0002 | 0x0004 | 0x4000;
 
     public int Version { get; set; } = CurrentVersion;
@@ -27,6 +27,7 @@ public sealed class AppSettings
     public double PlaybackSpeed { get; set; } = 1.0;
     public int RepeatCount { get; set; } = 1;
     public bool ContinuousPlayback { get; set; }
+    public bool LockMouseDuringDirectionalHold { get; set; }
     public ThemePreference Theme { get; set; } = ThemePreference.System;
     public string? RecentMacroPath { get; set; }
     public HotkeySetting RecordHotkey { get; set; } = new() { Modifiers = DefaultHotkeyModifiers, VirtualKey = 0x52 };

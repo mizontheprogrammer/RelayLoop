@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Security;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -34,9 +36,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly IUserDialogService _dialogs;
     private readonly IDisplayLayoutService _displayLayouts;
     private readonly RecoveryService _recovery;
+    private readonly ProfileService _profileService;
     private readonly RunnerExportService _runnerExporter;
     private readonly InputRecorderService _recorder;
     private readonly IInputPlaybackService _playback;
+    private readonly CursorLockService _cursorLock;
     private readonly AppStateMachine _stateMachine = new();
     private readonly EditorHistory<MacroDocument> _history;
     private readonly Dispatcher _dispatcher;
@@ -70,6 +74,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _recordHotkeyText = HotKeyGesture.RecordDefault.ToString();
     private string _playHotkeyText = HotKeyGesture.PlayDefault.ToString();
     private string _stopHotkeyText = HotKeyGesture.EmergencyStopDefault.ToString();
+    private string _profileName = string.Empty;
+    private string _profileStatusText = "Type a profile name to save this setup.";
     private EventRowViewModel? _selectedEvent;
     private bool _isExpanded;
     private bool _isSettingsOpen;
@@ -84,6 +90,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _disposed;
     private bool _hasRunActivity;
     private bool _activeDirectionalHoldPreset;
+    private bool _lockMouseDuringDirectionalHold;
+    private int? _activeMouseLockX;
+    private int? _activeMouseLockY;
     private int _countdownValue;
     private int _repeatCount = 1;
     private int _liveEventCount;
@@ -99,9 +108,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _dialogs = new UserDialogService();
         _displayLayouts = new DisplayLayoutService();
         _recovery = new RecoveryService(_settingsService.BaseDirectory);
+        _profileService = new ProfileService(_settingsService.BaseDirectory);
         _runnerExporter = new RunnerExportService();
         _recorder = new InputRecorderService(new WindowsLowLevelInputSource());
         _playback = new InputPlaybackService(new WindowsInputInjector());
+        _cursorLock = new CursorLockService();
         _history = new EditorHistory<MacroDocument>(_document, static item => item.DeepClone(), capacity: 250);
 
         try
@@ -114,6 +125,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         Events = [];
+        Profiles = [];
         SpeedChoices = CorePlaybackOptions.PresetSpeeds;
         ThemeChoices = Enum.GetValues<ThemePreference>();
 
@@ -125,6 +137,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         StopCommand = new AsyncRelayCommand(StopAsync, CanStop);
         ExportCommand = new AsyncRelayCommand(ExportAsync, CanExport);
         ApplyHotkeysCommand = new AsyncRelayCommand(ApplyHotkeysAsync, () => !IsBusy && _initialized);
+        SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, CanSaveProfile);
+        LoadProfileCommand = new AsyncRelayCommand(LoadProfileAsync, CanUseSelectedProfile);
+        DeleteProfileCommand = new AsyncRelayCommand(DeleteProfileAsync, CanUseSelectedProfile);
         ToggleExpandedCommand = new RelayCommand(ToggleExpanded);
         ToggleSettingsCommand = new RelayCommand(ToggleSettings, () => !IsBusy);
         DismissErrorCommand = new RelayCommand(DismissError, () => HasError);
@@ -140,6 +155,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                  {
                      OpenCommand, SaveCommand, SaveAsCommand, RecordCommand, PlayCommand,
                      StopCommand, ExportCommand, ApplyHotkeysCommand,
+                     SaveProfileCommand, LoadProfileCommand, DeleteProfileCommand,
                  })
         {
             command.ExecutionFailed += OnCommandExecutionFailed;
@@ -161,6 +177,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public ObservableCollection<EventRowViewModel> Events { get; }
 
+    public ObservableCollection<string> Profiles { get; }
+
     public IReadOnlyList<double> SpeedChoices { get; }
 
     public IReadOnlyList<ThemePreference> ThemeChoices { get; }
@@ -173,6 +191,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncRelayCommand StopCommand { get; }
     public AsyncRelayCommand ExportCommand { get; }
     public AsyncRelayCommand ApplyHotkeysCommand { get; }
+    public AsyncRelayCommand SaveProfileCommand { get; }
+    public AsyncRelayCommand LoadProfileCommand { get; }
+    public AsyncRelayCommand DeleteProfileCommand { get; }
     public RelayCommand ToggleExpandedCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
     public RelayCommand DismissErrorCommand { get; }
@@ -227,6 +248,36 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 OnPropertyChanged(nameof(RemainingText));
             }
         }
+    }
+
+    public bool LockMouseDuringDirectionalHold
+    {
+        get => _lockMouseDuringDirectionalHold;
+        set
+        {
+            if (SetProperty(ref _lockMouseDuringDirectionalHold, value))
+            {
+                OnPropertyChanged(nameof(MouseLockStatusText));
+            }
+        }
+    }
+
+    public string ProfileName
+    {
+        get => _profileName;
+        set
+        {
+            if (SetProperty(ref _profileName, value ?? string.Empty))
+            {
+                RefreshCommands();
+            }
+        }
+    }
+
+    public string ProfileStatusText
+    {
+        get => _profileStatusText;
+        private set => SetProperty(ref _profileStatusText, value);
     }
 
     public int RepeatCount
@@ -352,6 +403,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         ? FormatDirectionalHoldRemaining(GetDirectionalHoldTimer().Remaining)
         : "—";
 
+    public bool IsMouseLocked => _cursorLock.IsLocked;
+
+    public string MouseLockStatusText => IsMouseLocked && _activeMouseLockX is int x && _activeMouseLockY is int y
+        ? $"Mouse locked at ({x}, {y})"
+        : LockMouseDuringDirectionalHold
+            ? "Mouse lock is ready for D/A hold playback."
+            : "Mouse lock is off.";
+
     public Brush StateBrush => GetBrush(_stateMachine.State switch
     {
         AppState.Recording => "RecordBrush",
@@ -394,6 +453,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             }
 
             ApplyLoadedSettings(_settings);
+            await RefreshProfileNamesAsync().ConfigureAwait(true);
             InitializeHotkeys();
 
             var loadedRecovery = await TryLoadRecoveryAsync().ConfigureAwait(true);
@@ -612,6 +672,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 ? exception
                 : new AggregateException(disposalFailure, exception);
         }
+
+        try
+        {
+            _cursorLock.Dispose();
+        }
+        catch (Exception exception)
+        {
+            disposalFailure = disposalFailure is null
+                ? exception
+                : new AggregateException(disposalFailure, exception);
+        }
         finally
         {
             _recoveryWriteGate.Dispose();
@@ -671,6 +742,124 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             EnterError("The macro could not be saved. " + exception.Message, exception);
             return false;
+        }
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        string name;
+        try
+        {
+            name = ProfileService.ValidateName(ProfileName);
+        }
+        catch (ArgumentException exception)
+        {
+            SetBanner(exception.Message);
+            return;
+        }
+
+        try
+        {
+            if (await _profileService.ExistsAsync(name).ConfigureAwait(true) &&
+                !_dialogs.ConfirmOverwriteProfile(name))
+            {
+                return;
+            }
+
+            var profile = new MacroProfile
+            {
+                Name = name,
+                Document = CreateDocumentSnapshot(ensureDisplayLayout: true),
+                PlaybackSpeed = PlaybackSpeed,
+                RepeatCount = RepeatCount,
+                ContinuousPlayback = ContinuousPlayback,
+                LockMouseDuringDirectionalHold = LockMouseDuringDirectionalHold,
+            };
+            await _profileService.SaveAsync(profile).ConfigureAwait(true);
+            ProfileName = name;
+            await RefreshProfileNamesAsync().ConfigureAwait(true);
+            ClearBanner();
+            ProfileStatusText = $"Saved profile ‘{name}’.";
+            _logger?.Information("profile_saved");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or MacroValidationException or ArgumentOutOfRangeException)
+        {
+            EnterError("The profile could not be saved. " + exception.Message, exception);
+        }
+    }
+
+    private async Task LoadProfileAsync()
+    {
+        var name = FindProfileName(ProfileName);
+        if (name is null || !await ConfirmSafeToReplaceDocumentAsync().ConfigureAwait(true))
+        {
+            return;
+        }
+
+        try
+        {
+            var profile = await _profileService.LoadAsync(name).ConfigureAwait(true);
+            AdoptDocument(profile.Document, path: null, isDirty: true);
+            PlaybackSpeed = profile.PlaybackSpeed;
+            RepeatCount = profile.RepeatCount;
+            ContinuousPlayback = profile.ContinuousPlayback;
+            LockMouseDuringDirectionalHold = profile.LockMouseDuringDirectionalHold;
+            ProfileName = profile.Name;
+            ClearBanner();
+            ProfileStatusText = $"Loaded profile ‘{profile.Name}’.";
+            _logger?.Information("profile_loaded");
+            RefreshAll();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or InvalidDataException or JsonException or MacroValidationException or ArgumentOutOfRangeException)
+        {
+            EnterError("The profile could not be loaded. " + exception.Message, exception);
+            await RefreshProfileNamesAsync().ConfigureAwait(true);
+        }
+    }
+
+    private async Task DeleteProfileAsync()
+    {
+        var name = FindProfileName(ProfileName);
+        if (name is null || !_dialogs.ConfirmDeleteProfile(name))
+        {
+            return;
+        }
+
+        try
+        {
+            await _profileService.DeleteAsync(name).ConfigureAwait(true);
+            ProfileName = string.Empty;
+            await RefreshProfileNamesAsync().ConfigureAwait(true);
+            ClearBanner();
+            ProfileStatusText = $"Deleted profile ‘{name}’.";
+            _logger?.Information("profile_deleted");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            EnterError("The profile could not be deleted. " + exception.Message, exception);
+        }
+    }
+
+    private async Task RefreshProfileNamesAsync()
+    {
+        try
+        {
+            var selected = ProfileName;
+            var names = await _profileService.ListNamesAsync().ConfigureAwait(true);
+            Profiles.Clear();
+            foreach (var name in names)
+            {
+                Profiles.Add(name);
+            }
+
+            ProfileName = FindProfileName(selected) ?? selected;
+            OnPropertyChanged(nameof(Profiles));
+            RefreshCommands();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            ProfileStatusText = "Saved profiles are unavailable: " + exception.Message;
+            _logger?.Warning("profile_list_failed");
         }
     }
 
@@ -796,6 +985,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
+            if (_activeDirectionalHoldPreset && LockMouseDuringDirectionalHold)
+            {
+                var target = snapshot.Events[1];
+                _cursorLock.LockAt(target.X, target.Y);
+                _activeMouseLockX = target.X;
+                _activeMouseLockY = target.Y;
+                RefreshMouseLockProperties();
+                _logger?.Information("directional_hold_mouse_locked");
+            }
+
             await _playback.PlayAsync(snapshot.Events, new ServicePlaybackOptions
             {
                 Speed = _activePlaybackSpeed,
@@ -810,12 +1009,24 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception exception)
         {
-            EnterError("Playback stopped because an input could not be sent or released. " + exception.Message, exception);
+            EnterError("Playback stopped because Windows could not control or safely release an input. " + exception.Message, exception);
         }
         finally
         {
             _activityStopwatch.Stop();
+            try
+            {
+                _cursorLock.Release();
+            }
+            catch (Win32Exception exception)
+            {
+                EnterError("Windows could not release the mouse-position lock. " + exception.Message, exception);
+            }
+
+            _activeMouseLockX = null;
+            _activeMouseLockY = null;
             _activeDirectionalHoldPreset = false;
+            RefreshMouseLockProperties();
             if (_stateMachine.State == AppState.Playing)
             {
                 _stateMachine.TryRequestStop(out _);
@@ -1205,6 +1416,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _playbackSpeed = settings.PlaybackSpeed;
         _repeatCount = settings.RepeatCount;
         _continuousPlayback = settings.ContinuousPlayback;
+        _lockMouseDuringDirectionalHold = settings.LockMouseDuringDirectionalHold;
         _windowLeft = settings.WindowLeft;
         _windowTop = settings.WindowTop;
         _recordGesture = FromSetting(settings.RecordHotkey, HotKeyGesture.RecordDefault);
@@ -1649,6 +1861,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(WindowMinWidth));
         OnPropertyChanged(nameof(CountdownEnabled));
         OnPropertyChanged(nameof(ContinuousPlayback));
+        OnPropertyChanged(nameof(LockMouseDuringDirectionalHold));
+        OnPropertyChanged(nameof(MouseLockStatusText));
         OnPropertyChanged(nameof(PlaybackSpeed));
         OnPropertyChanged(nameof(RepeatCount));
         OnPropertyChanged(nameof(Theme));
@@ -1669,6 +1883,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(IsDirectionalHoldPlayback));
         OnPropertyChanged(nameof(ActiveHoldText));
         OnPropertyChanged(nameof(PhaseRemainingText));
+        OnPropertyChanged(nameof(IsMouseLocked));
+        OnPropertyChanged(nameof(MouseLockStatusText));
         OnPropertyChanged(nameof(RecordAutomationName));
         OnPropertyChanged(nameof(PlayAutomationName));
         RefreshCommands();
@@ -1696,6 +1912,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         StopCommand.RaiseCanExecuteChanged();
         ExportCommand.RaiseCanExecuteChanged();
         ApplyHotkeysCommand.RaiseCanExecuteChanged();
+        SaveProfileCommand.RaiseCanExecuteChanged();
+        LoadProfileCommand.RaiseCanExecuteChanged();
+        DeleteProfileCommand.RaiseCanExecuteChanged();
         ToggleSettingsCommand.RaiseCanExecuteChanged();
         DismissErrorCommand.RaiseCanExecuteChanged();
         UndoCommand.RaiseCanExecuteChanged();
@@ -1713,10 +1932,28 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private bool CanPlay() => CanUseFileCommands() && Events.Any(static row => row.IsEnabled) && _stopRegistration is not null;
     private bool CanStop() => IsCountingDown || _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Stopping;
     private bool CanExport() => CanUseFileCommands() && Events.Count > 0;
+    private bool CanSaveProfile() => CanUseFileCommands() && Events.Count > 0 && IsValidProfileName(ProfileName);
+    private bool CanUseSelectedProfile() => CanUseFileCommands() && FindProfileName(ProfileName) is not null;
     private bool CanClearAllEvents() => CanUseFileCommands() && Events.Count > 0;
     private bool CanUndo() => CanUseFileCommands() && _history.CanUndo;
     private bool CanRedo() => CanUseFileCommands() && _history.CanRedo;
     private bool CanEditSelectedEvent() => CanUseFileCommands() && SelectedEvent is not null;
+
+    private static bool IsValidProfileName(string? name)
+    {
+        try
+        {
+            _ = ProfileService.ValidateName(name);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private string? FindProfileName(string? name) => Profiles.FirstOrDefault(
+        profile => string.Equals(profile, name?.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private bool CanMoveSelectedEvent(int offset)
     {
@@ -1773,6 +2010,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         PlaybackSpeed = PlaybackSpeed,
         RepeatCount = RepeatCount,
         ContinuousPlayback = ContinuousPlayback,
+        LockMouseDuringDirectionalHold = LockMouseDuringDirectionalHold,
         Theme = Theme,
         RecentMacroPath = _settings.RecentMacroPath,
         RecordHotkey = ToSetting(_recordGesture),
@@ -1840,9 +2078,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         finally
         {
-            _playback.Dispose();
-            _themeService.ThemeChanged -= OnThemeChanged;
-            _themeService.Dispose();
+            try
+            {
+                _playback.Dispose();
+            }
+            finally
+            {
+                try
+                {
+                    _cursorLock.Dispose();
+                }
+                finally
+                {
+                    _themeService.ThemeChanged -= OnThemeChanged;
+                    _themeService.Dispose();
+                }
+            }
         }
     }
 
@@ -1949,6 +2200,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private DirectionalHoldTimer GetDirectionalHoldTimer() =>
         DirectionalHoldPreset.GetTimer(_activityStopwatch.Elapsed, _activePlaybackSpeed);
+
+    private void RefreshMouseLockProperties()
+    {
+        OnPropertyChanged(nameof(IsMouseLocked));
+        OnPropertyChanged(nameof(MouseLockStatusText));
+    }
 
     private static string FormatDirectionalHoldRemaining(TimeSpan remaining)
     {

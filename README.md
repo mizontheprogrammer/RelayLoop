@@ -36,6 +36,8 @@ The compact toolbar is ordered as follows:
 Expanded inspector tools:
 
 - **D/A Hold** replaces the current event list with a repeating four-minute cycle: hold `D + LM1` for two minutes, release both, hold `A + LM1` for two minutes, release both, then repeat until stopped. It uses the selected or last recorded mouse event as the LM1 screen position, switches playback to `1x` continuous mode, and shows a live phase countdown.
+- **Profiles** save a named copy of the macro together with its speed, repeat/continuous settings, and D/A mouse-lock choice. Profiles are stored locally under RelayLoop's application-data folder and can be loaded or deleted from the expanded Activity panel.
+- **Lock mouse at LM1 target** confines the pointer to the preset's recorded screen coordinate while the D/A hold cycle is playing. It is released automatically on Stop, emergency stop, playback failure, or app shutdown, and it is intentionally ignored for ordinary macros that contain pointer movement.
 - **Clear all** removes the complete event list after confirmation. `Ctrl+Z` restores the entire list as one undo step; `Ctrl+Shift+Delete` is the keyboard shortcut.
 - Emergency Stop (`Esc` or the configured global stop hotkey) cancels either hold immediately and releases the key and mouse button tracked by playback.
 
