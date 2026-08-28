@@ -20,12 +20,13 @@ RelayLoop runs as the current user. It does not request elevation, install a ser
 
 The compact toolbar is ordered as follows:
 
-`Open | Save | Record | Play | Stop | Export | Repeat | Speed | Settings`
+`Open | Save | Record | Play | Pause | Stop | Export | Repeat | Speed | Settings`
 
 - Open loads a `.rloop` file. You can also drop one `.rloop` file onto the window.
 - Save writes the current macro atomically. `Ctrl+Shift+S` opens Save As.
 - Record starts or stops global capture. The record control and status indicator turn red while capture is active.
 - Play replays enabled events at the selected speed and repeat count. The play control and status indicator turn green while active.
+- Pause releases held inputs and the cursor lock while preserving the active step and remaining delay; Resume restores them safely.
 - Stop immediately cancels a countdown, recording, or playback and releases inputs held by playback.
 - Export creates a single-file `.exe` containing the loaded macro and the RelayLoop runner.
 - Repeat accepts `1` through `9999`. It is disabled while continuous playback is selected.
@@ -35,6 +36,8 @@ The compact toolbar is ordered as follows:
 
 Expanded inspector tools:
 
+- RelayLoop creates and loads an editable **Default D-A Hold** profile on a fresh install: D + Mouse Button 1 for two minutes, then A + Mouse Button 1 for two minutes, repeating until stopped.
+- **Steps** is the primary editor. Add, duplicate, move, or delete steps; choose Press Once, Hold, Release, or Wait; and set duration/delay units in milliseconds, seconds, or minutes. Record Keybind captures any physical keyboard/mouse chord, including punctuation, modifiers, function/numpad/navigation keys, and mouse buttons 1â€“5. Clear replaces an assignment with an unassigned state. The Recorded events tab remains available for legacy files and detailed inspection.
 - **D/A Hold** replaces the current event list with a repeating four-minute cycle: hold `D + LM1` for two minutes, release both, hold `A + LM1` for two minutes, release both, then repeat until stopped. It uses the selected or last recorded mouse event as the LM1 screen position, switches playback to `1x` continuous mode, and shows a live phase countdown.
 - **Profiles** save a named copy of the macro together with its speed, repeat/continuous settings, and D/A mouse-lock choice. Profiles are stored locally under RelayLoop's application-data folder and can be loaded or deleted from the expanded Activity panel.
 - **Lock mouse at LM1 target** confines the pointer to the preset's recorded screen coordinate while the D/A hold cycle is playing. It is released automatically on Stop, emergency stop, playback failure, or app shutdown, and it is intentionally ignored for ordinary macros that contain pointer movement.
@@ -61,6 +64,7 @@ Default global hotkeys work even when RelayLoop is not focused:
 |---|---|
 | Start / stop recording | `Ctrl+Shift+Alt+R` |
 | Start playback | `Ctrl+Shift+Alt+P` |
+| Pause / resume playback | `Ctrl+Shift+Alt+U` |
 | Emergency stop | `Ctrl+Shift+Alt+S` |
 
 Global shortcuts must use at least one modifier plus a supported letter, number, function key, navigation key, Space, Tab, Insert, or Delete. RelayLoop checks for duplicates and Windows registration conflicts. Playback remains disabled unless the emergency-stop hotkey was registered successfully.

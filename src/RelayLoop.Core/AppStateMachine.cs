@@ -5,6 +5,7 @@ public enum AppState
     Idle,
     Recording,
     Playing,
+    Paused,
     Stopping,
     Error,
 }
@@ -82,13 +83,16 @@ public sealed class AppStateMachine
 
     public bool CanPlay => State == AppState.Idle;
 
-    public bool CanStop => State is AppState.Recording or AppState.Playing;
+    public bool CanStop => State is AppState.Recording or AppState.Playing or AppState.Paused;
 
     public bool TryBeginRecording(out string? failureReason) =>
         TryTransition(AppState.Recording, errorMessage: null, out failureReason);
 
     public bool TryBeginPlayback(out string? failureReason) =>
         TryTransition(AppState.Playing, errorMessage: null, out failureReason);
+
+    public bool TryPause(out string? failureReason) => TryTransitionFrom(AppState.Playing, AppState.Paused, null, out failureReason);
+    public bool TryResume(out string? failureReason) => TryTransitionFrom(AppState.Paused, AppState.Playing, null, out failureReason);
 
     public bool TryRequestStop(out string? failureReason) =>
         TryTransition(AppState.Stopping, errorMessage: null, out failureReason);
@@ -189,7 +193,8 @@ public sealed class AppStateMachine
     {
         (AppState.Idle, AppState.Recording or AppState.Playing or AppState.Error) => true,
         (AppState.Recording, AppState.Stopping or AppState.Error) => true,
-        (AppState.Playing, AppState.Stopping or AppState.Error) => true,
+        (AppState.Playing, AppState.Paused or AppState.Stopping or AppState.Error) => true,
+        (AppState.Paused, AppState.Playing or AppState.Stopping or AppState.Error) => true,
         (AppState.Stopping, AppState.Idle or AppState.Error) => true,
         (AppState.Error, AppState.Idle or AppState.Error) => true,
         _ => false,

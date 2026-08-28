@@ -23,6 +23,7 @@ public sealed class ProfileServiceTests
                 ContinuousPlayback = true,
                 LockMouseDuringDirectionalHold = true,
             };
+            profile.Document.Steps = MacroStepCompiler.CreateDefault(321, -45);
 
             await service.SaveAsync(profile);
 
@@ -35,6 +36,8 @@ public sealed class ProfileServiceTests
             Assert.True(DirectionalHoldPreset.IsMatch(loaded.Document.Events));
             Assert.Equal(321, loaded.Document.Events[1].X);
             Assert.Equal(-45, loaded.Document.Events[1].Y);
+            Assert.Equal(2, loaded.Document.Steps!.Count);
+            Assert.Equal(0x44, loaded.Document.Steps[0].Inputs[0].VirtualKey);
 
             await service.DeleteAsync("Strafe farm");
 

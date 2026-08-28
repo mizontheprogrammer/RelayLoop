@@ -13,6 +13,9 @@ public readonly record struct HotKeyGesture(HotKeyModifiers Modifiers, uint Virt
     public static HotKeyGesture PlayDefault { get; } =
         new(HotKeyModifiers.Control | HotKeyModifiers.Shift | HotKeyModifiers.Alt | HotKeyModifiers.NoRepeat, 0x50);
 
+    public static HotKeyGesture PauseDefault { get; } =
+        new(HotKeyModifiers.Control | HotKeyModifiers.Shift | HotKeyModifiers.Alt | HotKeyModifiers.NoRepeat, 0x55);
+
     public static HotKeyGesture EmergencyStopDefault { get; } =
         new(HotKeyModifiers.Control | HotKeyModifiers.Shift | HotKeyModifiers.Alt | HotKeyModifiers.NoRepeat, 0x53);
 

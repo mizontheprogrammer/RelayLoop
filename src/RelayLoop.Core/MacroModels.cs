@@ -24,6 +24,43 @@ public enum MouseButton
     X2,
 }
 
+public enum MacroInputKind { Keyboard, MouseButton }
+
+public enum MacroStepAction { PressOnce, Hold, Release, Wait }
+
+public enum DurationUnit { Milliseconds, Seconds, Minutes }
+
+/// <summary>A keyboard key or mouse button assigned to a user-authored step.</summary>
+public sealed class MacroInputDefinition
+{
+    public MacroInputKind Kind { get; set; }
+    public int VirtualKey { get; set; }
+    public int ScanCode { get; set; }
+    public bool IsExtendedKey { get; set; }
+    public MouseButton Button { get; set; }
+    public MacroInputDefinition DeepClone() => (MacroInputDefinition)MemberwiseClone();
+}
+
+/// <summary>A beginner-friendly macro step which is compiled to the existing low-level event format.</summary>
+public sealed class MacroStepDefinition
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public MacroStepAction Action { get; set; } = MacroStepAction.Hold;
+    public List<MacroInputDefinition> Inputs { get; set; } = [];
+    public double Duration { get; set; } = 1;
+    public DurationUnit DurationUnit { get; set; } = DurationUnit.Seconds;
+    public double DelayAfter { get; set; }
+    public DurationUnit DelayUnit { get; set; } = DurationUnit.Milliseconds;
+    public int MouseX { get; set; }
+    public int MouseY { get; set; }
+    public MacroStepDefinition DeepClone() => new()
+    {
+        Id = Id, Action = Action, Duration = Duration, DurationUnit = DurationUnit,
+        DelayAfter = DelayAfter, DelayUnit = DelayUnit, MouseX = MouseX, MouseY = MouseY,
+        Inputs = Inputs?.Select(static input => input.DeepClone()).ToList() ?? [],
+    };
+}
+
 /// <summary>
 /// One recorded input event. Coordinates are physical virtual-desktop pixels and may be negative.
 /// DelayMicroseconds is the monotonic delay since the preceding recorded event.
@@ -154,6 +191,9 @@ public sealed class MacroDocument
     [JsonRequired]
     public List<MacroEvent> Events { get; set; } = [];
 
+    /// <summary>Optional editable steps. Missing in legacy files, which continue using Events.</summary>
+    public List<MacroStepDefinition>? Steps { get; set; }
+
     public MacroDocument DeepClone() => new()
     {
         Format = Format,
@@ -161,5 +201,6 @@ public sealed class MacroDocument
         CreatedUtc = CreatedUtc,
         DisplayLayout = DisplayLayout?.DeepClone(),
         Events = Events?.Select(static macroEvent => macroEvent.DeepClone()).ToList() ?? [],
+        Steps = Steps?.Select(static step => step.DeepClone()).ToList(),
     };
 }

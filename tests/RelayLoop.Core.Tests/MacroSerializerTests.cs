@@ -8,6 +8,20 @@ namespace RelayLoop.Core.Tests;
 public sealed class MacroSerializerTests
 {
     [Fact]
+    public void RoundTrip_PreservesEditableStepsAndLegacyDocumentsRemainValid()
+    {
+        var document = TestMacros.Create();
+        document.Steps = MacroStepCompiler.CreateDefault(12, 34);
+        document.Events = MacroStepCompiler.Compile(document.Steps);
+
+        var restored = MacroSerializer.Deserialize(MacroSerializer.Serialize(document));
+
+        Assert.Equal(2, restored.Steps!.Count);
+        Assert.Equal(0x44, restored.Steps[0].Inputs[0].VirtualKey);
+        Assert.Equal(MouseButton.Left, restored.Steps[0].Inputs[1].Button);
+        Assert.Null(MacroSerializer.Deserialize(MacroSerializer.Serialize(TestMacros.Create())).Steps);
+    }
+    [Fact]
     public void RoundTrip_PreservesEverySupportedField()
     {
         var original = TestMacros.Create();

@@ -6,7 +6,7 @@
         xmlns:converters="clr-namespace:RelayLoop.App.Converters"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}"
-        Width="590" Height="94" MinWidth="590" MinHeight="94" MaxHeight="760"
+        Width="636" Height="94" MinWidth="636" MinHeight="94" MaxHeight="760"
         WindowStartupLocation="Manual" WindowStyle="SingleBorderWindow"
         Background="{DynamicResource WindowBrush}" Topmost="{Binding AlwaysOnTop}"
         FontFamily="{StaticResource AppFont}" FontSize="13" Foreground="{DynamicResource TextBrush}"
@@ -132,6 +132,15 @@
               <Path Data="{StaticResource IconPlay}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                     Width="25" Height="25" Stretch="Uniform" />
               <TextBlock Style="{StaticResource ClassicToolbarLabelStyle}" Text="Play" />
+            </StackPanel>
+          </Button>
+          <Button Width="46" Style="{StaticResource ClassicToolbarButtonStyle}" Command="{Binding PauseResumeCommand}"
+                  Foreground="{DynamicResource WarningBrush}" ToolTip="Pause or resume playback"
+                  AutomationProperties.Name="Pause or resume macro">
+            <StackPanel>
+              <Path Data="{StaticResource IconPause}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                    Width="23" Height="23" Stretch="Uniform" />
+              <TextBlock Style="{StaticResource ClassicToolbarLabelStyle}" Text="{Binding PauseResumeLabel}" />
             </StackPanel>
           </Button>
           <Button Width="46" Style="{StaticResource ClassicToolbarButtonStyle}" Command="{Binding StopCommand}"
@@ -265,8 +274,14 @@
             <RowDefinition Height="*" />
           </Grid.RowDefinitions>
           <DockPanel Margin="0,0,0,6">
-            <TextBlock Text="Event inspector" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock Text="Macro steps" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="Add" Command="{Binding AddStepCommand}" Padding="8,4" Margin="0,0,4,0" />
+              <Button Content="Duplicate" Command="{Binding DuplicateStepCommand}" Padding="8,4" Margin="0,0,4,0" />
+              <Button Content="Up" Command="{Binding MoveStepUpCommand}" Padding="8,4" Margin="0,0,4,0" />
+              <Button Content="Down" Command="{Binding MoveStepDownCommand}" Padding="8,4" Margin="0,0,4,0" />
+              <Button Content="Delete step" Command="{Binding DeleteStepCommand}" Padding="8,4" Margin="0,0,8,0"
+                      Foreground="{DynamicResource ErrorBrush}" />
               <Button Content="D/A Hold" Command="{Binding CreateDirectionalHoldPresetCommand}"
                       Padding="8,4" Margin="0,0,4,0"
                       ToolTip="Replace events with a repeating 2-minute D + LM1 / A + LM1 cycle at the selected or last recorded mouse position"
@@ -297,7 +312,47 @@
             </StackPanel>
           </DockPanel>
 
-          <DataGrid Grid.Row="1" ItemsSource="{Binding Events}" SelectedItem="{Binding SelectedEvent}"
+          <TabControl Grid.Row="1">
+            <TabItem Header="Steps">
+              <DataGrid ItemsSource="{Binding Steps}" SelectedItem="{Binding SelectedStep}"
+                        AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                        CanUserSortColumns="False" IsReadOnly="{Binding IsBusy}"
+                        RowHeight="52"
+                        AlternatingRowBackground="{DynamicResource WindowBrush}"
+                        AutomationProperties.Name="Editable macro steps">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="#" Binding="{Binding Index}" IsReadOnly="True" Width="36" />
+                  <DataGridTemplateColumn Header="Action" Width="100">
+                    <DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding ActionChoices}" SelectedItem="{Binding Action, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <DataGridTemplateColumn Header="Inputs" Width="*" MinWidth="210">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <StackPanel Margin="3,2">
+                          <TextBlock Text="{Binding InputSummary}" Margin="2,0,2,3" TextTrimming="CharacterEllipsis" ToolTip="{Binding InputSummary}" />
+                          <StackPanel Orientation="Horizontal">
+                          <Button Content="Record Keybind" Padding="7,2" Margin="0,0,4,0"
+                                  Command="{Binding DataContext.RecordKeybindCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}" AutomationProperties.Name="Record keybind for this step" />
+                          <Button Content="Clear" Padding="7,2"
+                                  Command="{Binding DataContext.ClearKeybindCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  CommandParameter="{Binding}" />
+                          </StackPanel>
+                        </StackPanel>
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <DataGridTextColumn Header="Duration" Binding="{Binding Duration, UpdateSourceTrigger=LostFocus}" Width="78" />
+                  <DataGridTemplateColumn Header="Unit" Width="92"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding UnitChoices}" SelectedItem="{Binding DurationUnit, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                  <DataGridTextColumn Header="Delay" Binding="{Binding DelayAfter, UpdateSourceTrigger=LostFocus}" Width="62" />
+                  <DataGridTemplateColumn Header="Delay unit" Width="104"><DataGridTemplateColumn.CellTemplate><DataTemplate><ComboBox ItemsSource="{Binding UnitChoices}" SelectedItem="{Binding DelayUnit, UpdateSourceTrigger=PropertyChanged}" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                  <DataGridTextColumn Header="X" Binding="{Binding MouseX, UpdateSourceTrigger=LostFocus}" Width="58" />
+                  <DataGridTextColumn Header="Y" Binding="{Binding MouseY, UpdateSourceTrigger=LostFocus}" Width="58" />
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+            <TabItem Header="Recorded events">
+          <DataGrid ItemsSource="{Binding Events}" SelectedItem="{Binding SelectedEvent}"
                     AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                     CanUserSortColumns="False"
                     IsReadOnly="{Binding IsBusy}" AlternatingRowBackground="{DynamicResource WindowBrush}"
@@ -318,6 +373,8 @@
               <DataGridTextColumn Header="Summary" Binding="{Binding Details}" IsReadOnly="True" Width="*" MinWidth="150" />
             </DataGrid.Columns>
           </DataGrid>
+            </TabItem>
+          </TabControl>
         </Grid>
 
         <Border Grid.Column="2" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}"
@@ -375,8 +432,8 @@
               </UniformGrid>
               <CheckBox IsChecked="{Binding LockMouseDuringDirectionalHold}"
                         IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBooleanConverter}}"
-                        AutomationProperties.Name="Lock mouse at the LM1 target during D and A hold playback">
-                <TextBlock Text="Lock mouse at LM1 target during D/A hold" TextWrapping="Wrap" />
+                        AutomationProperties.Name="Lock mouse at the configured mouse target during playback">
+                <TextBlock Text="Lock mouse at the step target during playback" TextWrapping="Wrap" />
               </CheckBox>
               <TextBlock Text="{Binding MouseLockStatusText}" TextWrapping="Wrap"
                          Foreground="{DynamicResource TextMutedBrush}" FontSize="11" Margin="20,2,0,0" />
@@ -418,6 +475,9 @@
                 <TextBlock Text="Play" />
                 <TextBox Text="{Binding PlayHotkeyText, UpdateSourceTrigger=LostFocus}" Margin="0,3,0,7"
                          AutomationProperties.Name="Playback global hotkey" />
+                <TextBlock Text="Pause / resume" />
+                <TextBox Text="{Binding PauseHotkeyText, UpdateSourceTrigger=LostFocus}" Margin="0,3,0,7"
+                         AutomationProperties.Name="Pause and resume global hotkey" />
                 <TextBlock Text="Emergency stop" />
                 <TextBox Text="{Binding StopHotkeyText, UpdateSourceTrigger=LostFocus}" Margin="0,3,0,8"
                          AutomationProperties.Name="Emergency stop global hotkey" />

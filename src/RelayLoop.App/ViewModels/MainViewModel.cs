@@ -39,6 +39,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly ProfileService _profileService;
     private readonly RunnerExportService _runnerExporter;
     private readonly InputRecorderService _recorder;
+    private readonly IInputBindingCaptureService _inputCapture;
     private readonly IInputPlaybackService _playback;
     private readonly CursorLockService _cursorLock;
     private readonly AppStateMachine _stateMachine = new();
@@ -56,9 +57,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private IGlobalHotKeyService? _hotKeyService;
     private IGlobalHotKeyRegistration? _recordRegistration;
     private IGlobalHotKeyRegistration? _playRegistration;
+    private IGlobalHotKeyRegistration? _pauseRegistration;
     private IGlobalHotKeyRegistration? _stopRegistration;
     private HotKeyGesture _recordGesture = HotKeyGesture.RecordDefault;
     private HotKeyGesture _playGesture = HotKeyGesture.PlayDefault;
+    private HotKeyGesture _pauseGesture = HotKeyGesture.PauseDefault;
     private HotKeyGesture _stopGesture = HotKeyGesture.EmergencyStopDefault;
     private CancellationTokenSource? _countdownCancellation;
     private PlaybackProgressEventArgs? _pendingPlaybackProgress;
@@ -73,10 +76,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private string _countdownActionText = string.Empty;
     private string _recordHotkeyText = HotKeyGesture.RecordDefault.ToString();
     private string _playHotkeyText = HotKeyGesture.PlayDefault.ToString();
+    private string _pauseHotkeyText = HotKeyGesture.PauseDefault.ToString();
     private string _stopHotkeyText = HotKeyGesture.EmergencyStopDefault.ToString();
     private string _profileName = string.Empty;
     private string _profileStatusText = "Type a profile name to save this setup.";
     private EventRowViewModel? _selectedEvent;
+    private StepRowViewModel? _selectedStep;
     private bool _isExpanded;
     private bool _isSettingsOpen;
     private bool _alwaysOnTop;
@@ -111,6 +116,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _profileService = new ProfileService(_settingsService.BaseDirectory);
         _runnerExporter = new RunnerExportService();
         _recorder = new InputRecorderService(new WindowsLowLevelInputSource());
+        _inputCapture = new InputBindingCaptureService(new WindowsLowLevelInputSource());
         _playback = new InputPlaybackService(new WindowsInputInjector());
         _cursorLock = new CursorLockService();
         _history = new EditorHistory<MacroDocument>(_document, static item => item.DeepClone(), capacity: 250);
@@ -125,6 +131,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         Events = [];
+        Steps = [];
         Profiles = [];
         SpeedChoices = CorePlaybackOptions.PresetSpeeds;
         ThemeChoices = Enum.GetValues<ThemePreference>();
@@ -135,6 +142,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RecordCommand = new AsyncRelayCommand(ToggleRecordingAsync, CanRecord);
         PlayCommand = new AsyncRelayCommand(PlayAsync, CanPlay);
         StopCommand = new AsyncRelayCommand(StopAsync, CanStop);
+        PauseResumeCommand = new AsyncRelayCommand(PauseResumeAsync, () => _stateMachine.State is AppState.Playing or AppState.Paused);
         ExportCommand = new AsyncRelayCommand(ExportAsync, CanExport);
         ApplyHotkeysCommand = new AsyncRelayCommand(ApplyHotkeysAsync, () => !IsBusy && _initialized);
         SaveProfileCommand = new AsyncRelayCommand(SaveProfileAsync, CanSaveProfile);
@@ -150,11 +158,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         CreateDirectionalHoldPresetCommand = new RelayCommand(CreateDirectionalHoldPreset, CanUseFileCommands);
         MoveEventUpCommand = new RelayCommand(() => MoveSelectedEvent(-1), () => CanMoveSelectedEvent(-1));
         MoveEventDownCommand = new RelayCommand(() => MoveSelectedEvent(1), () => CanMoveSelectedEvent(1));
+        AddStepCommand = new RelayCommand(AddStep, CanUseFileCommands);
+        DuplicateStepCommand = new RelayCommand(DuplicateStep, () => CanUseFileCommands() && SelectedStep is not null);
+        DeleteStepCommand = new RelayCommand(DeleteStep, () => CanUseFileCommands() && SelectedStep is not null);
+        MoveStepUpCommand = new RelayCommand(() => MoveStep(-1), () => CanMoveStep(-1));
+        MoveStepDownCommand = new RelayCommand(() => MoveStep(1), () => CanMoveStep(1));
+        RecordKeybindCommand = new RelayCommand<StepRowViewModel>(row => _ = CaptureStepInputAsync(row), row => CanUseFileCommands() && row is not null);
+        ClearKeybindCommand = new RelayCommand<StepRowViewModel>(row => ClearStepInputs(row), row => CanUseFileCommands() && row is not null);
 
         foreach (var command in new[]
                  {
                      OpenCommand, SaveCommand, SaveAsCommand, RecordCommand, PlayCommand,
-                     StopCommand, ExportCommand, ApplyHotkeysCommand,
+                     StopCommand, PauseResumeCommand, ExportCommand, ApplyHotkeysCommand,
                      SaveProfileCommand, LoadProfileCommand, DeleteProfileCommand,
                  })
         {
@@ -176,6 +191,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     public ObservableCollection<EventRowViewModel> Events { get; }
+    public ObservableCollection<StepRowViewModel> Steps { get; }
+    public IReadOnlyList<MacroStepAction> StepActions { get; } = Enum.GetValues<MacroStepAction>();
+    public IReadOnlyList<DurationUnit> DurationUnits { get; } = Enum.GetValues<DurationUnit>();
 
     public ObservableCollection<string> Profiles { get; }
 
@@ -189,6 +207,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public AsyncRelayCommand RecordCommand { get; }
     public AsyncRelayCommand PlayCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
+    public AsyncRelayCommand PauseResumeCommand { get; }
     public AsyncRelayCommand ExportCommand { get; }
     public AsyncRelayCommand ApplyHotkeysCommand { get; }
     public AsyncRelayCommand SaveProfileCommand { get; }
@@ -204,6 +223,13 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public RelayCommand CreateDirectionalHoldPresetCommand { get; }
     public RelayCommand MoveEventUpCommand { get; }
     public RelayCommand MoveEventDownCommand { get; }
+    public RelayCommand AddStepCommand { get; }
+    public RelayCommand DuplicateStepCommand { get; }
+    public RelayCommand DeleteStepCommand { get; }
+    public RelayCommand MoveStepUpCommand { get; }
+    public RelayCommand MoveStepDownCommand { get; }
+    public RelayCommand<StepRowViewModel> RecordKeybindCommand { get; }
+    public RelayCommand<StepRowViewModel> ClearKeybindCommand { get; }
 
     public bool IsExpanded
     {
@@ -327,6 +353,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         set => SetProperty(ref _playHotkeyText, value);
     }
 
+    public string PauseHotkeyText { get => _pauseHotkeyText; set => SetProperty(ref _pauseHotkeyText, value); }
+
     public string StopHotkeyText
     {
         get => _stopHotkeyText;
@@ -345,14 +373,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    public StepRowViewModel? SelectedStep
+    {
+        get => _selectedStep;
+        set { if (SetProperty(ref _selectedStep, value)) RefreshCommands(); }
+    }
+
     public bool IsRecording => _stateMachine.State == AppState.Recording;
-    public bool IsPlaying => _stateMachine.State == AppState.Playing;
-    public bool IsBusy => _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Stopping || IsCountingDown;
+    public bool IsPlaying => _stateMachine.State is AppState.Playing or AppState.Paused;
+    public bool IsPaused => _stateMachine.State == AppState.Paused;
+    public string PauseResumeLabel => IsPaused ? "Resume" : "Pause";
+    public bool IsBusy => _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Paused or AppState.Stopping || IsCountingDown;
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
     public string? ErrorMessage => _errorMessage;
     public double WindowHeight => (IsExpanded ? ExpandedHeight : CompactHeight) + (HasError ? ErrorBannerHeight : 0);
-    public double WindowWidth => IsExpanded ? 940 : 590;
-    public double WindowMinWidth => IsExpanded ? 860 : 590;
+    public double WindowWidth => IsExpanded ? 1280 : 636;
+    public double WindowMinWidth => IsExpanded ? 1080 : 636;
     public int EventCount => IsRecording ? Volatile.Read(ref _liveEventCount) : Events.Count;
     public string MacroDurationText => FormatDuration(GetDocumentDuration());
     public string LoopText => _loopText;
@@ -382,6 +418,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             ? "D + LM1"
             : "A + LM1",
         AppState.Playing => "Playing",
+        AppState.Paused => "Paused",
         AppState.Stopping => "Stopping",
         AppState.Error => "Error",
         _ when IsCountingDown => "Counting down",
@@ -408,13 +445,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public string MouseLockStatusText => IsMouseLocked && _activeMouseLockX is int x && _activeMouseLockY is int y
         ? $"Mouse locked at ({x}, {y})"
         : LockMouseDuringDirectionalHold
-            ? "Mouse lock is ready for D/A hold playback."
+            ? "Mouse lock is ready for step playback."
             : "Mouse lock is off.";
 
     public Brush StateBrush => GetBrush(_stateMachine.State switch
     {
         AppState.Recording => "RecordBrush",
         AppState.Playing => "PlayBrush",
+        AppState.Paused => "WarningBrush",
         AppState.Stopping => "WarningBrush",
         AppState.Error => "ErrorBrush",
         _ => "AccentBrush",
@@ -465,6 +503,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (!loadedRecovery)
             {
                 await TryLoadRecentMacroAsync().ConfigureAwait(true);
+            }
+
+            if (_currentPath is null && _document.Events.Count == 0)
+            {
+                await LoadOrCreateDefaultProfileAsync().ConfigureAwait(true);
             }
 
             if (_disposed)
@@ -661,6 +704,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             disposalFailure = exception;
         }
+
+        try { _inputCapture.Dispose(); }
+        catch (Exception exception) { disposalFailure = disposalFailure is null ? exception : new AggregateException(disposalFailure, exception); }
 
         try
         {
@@ -863,6 +909,33 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private async Task LoadOrCreateDefaultProfileAsync()
+    {
+        const string name = "Default D-A Hold";
+        MacroProfile profile;
+        if (await _profileService.ExistsAsync(name).ConfigureAwait(true))
+        {
+            profile = await _profileService.LoadAsync(name).ConfigureAwait(true);
+        }
+        else
+        {
+            var document = new MacroDocument
+            {
+                DisplayLayout = _displayLayouts.Capture(),
+                Steps = MacroStepCompiler.CreateDefault(),
+            };
+            document.Events = MacroStepCompiler.Compile(document.Steps);
+            profile = new MacroProfile { Name = name, Document = document, ContinuousPlayback = true, RepeatCount = 1 };
+            await _profileService.SaveAsync(profile).ConfigureAwait(true);
+            await RefreshProfileNamesAsync().ConfigureAwait(true);
+        }
+        AdoptDocument(profile.Document, null, isDirty: false);
+        ContinuousPlayback = profile.ContinuousPlayback;
+        RepeatCount = profile.RepeatCount;
+        ProfileName = name;
+        ProfileStatusText = "Loaded the editable default D/A profile.";
+    }
+
     private async Task ToggleRecordingAsync()
     {
         if (IsRecording)
@@ -906,7 +979,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _activityStopwatch.Restart();
             _loopText = "—";
             _remainingText = "—";
-            _recorder.ConfigureControlGestures(_recordGesture, _playGesture, _stopGesture);
+            _recorder.ConfigureControlGestures(_recordGesture, _playGesture, _pauseGesture, _stopGesture);
             await Task.Run(_recorder.Start).ConfigureAwait(true);
             ClearBanner();
             _logger?.Information("recording_started");
@@ -985,12 +1058,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
-            if (_activeDirectionalHoldPreset && LockMouseDuringDirectionalHold)
+            if (LockMouseDuringDirectionalHold)
             {
-                var target = snapshot.Events[1];
-                _cursorLock.LockAt(target.X, target.Y);
-                _activeMouseLockX = target.X;
-                _activeMouseLockY = target.Y;
+                var stepTarget = snapshot.Steps?.FirstOrDefault(step => step.Inputs.Any(input => input.Kind == MacroInputKind.MouseButton));
+                var legacyTarget = snapshot.Events.FirstOrDefault(item => item.Kind is MacroEventKind.MouseButtonDown or MacroEventKind.MouseButtonUp);
+                var targetX = stepTarget?.MouseX ?? legacyTarget?.X;
+                var targetY = stepTarget?.MouseY ?? legacyTarget?.Y;
+                if (targetX is null || targetY is null) throw new InvalidOperationException("Mouse lock requires a step containing a mouse button.");
+                _cursorLock.LockAt(targetX.Value, targetY.Value);
+                _activeMouseLockX = targetX;
+                _activeMouseLockY = targetY;
                 RefreshMouseLockProperties();
                 _logger?.Information("directional_hold_mouse_locked");
             }
@@ -1027,7 +1104,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _activeMouseLockY = null;
             _activeDirectionalHoldPreset = false;
             RefreshMouseLockProperties();
-            if (_stateMachine.State == AppState.Playing)
+            if (_stateMachine.State is AppState.Playing or AppState.Paused)
             {
                 _stateMachine.TryRequestStop(out _);
             }
@@ -1040,6 +1117,25 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             _remainingText = "—";
             RefreshAll();
         }
+    }
+
+    private async Task PauseResumeAsync()
+    {
+        if (_stateMachine.State == AppState.Playing)
+        {
+            await _playback.PauseAsync().ConfigureAwait(true);
+            _cursorLock.Release();
+            _activityStopwatch.Stop();
+            _stateMachine.TryPause(out _);
+        }
+        else if (_stateMachine.State == AppState.Paused)
+        {
+            if (_activeMouseLockX is int x && _activeMouseLockY is int y && LockMouseDuringDirectionalHold) _cursorLock.LockAt(x, y);
+            _playback.Resume();
+            _activityStopwatch.Start();
+            _stateMachine.TryResume(out _);
+        }
+        RefreshAll();
     }
 
     private async Task StopAsync()
@@ -1082,9 +1178,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 _stateMachine.TryCompleteStop(out _);
             }
         }
-        else if (state is AppState.Playing or AppState.Stopping)
+        else if (state is AppState.Playing or AppState.Paused or AppState.Stopping)
         {
-            if (state == AppState.Playing)
+            if (state is AppState.Playing or AppState.Paused)
             {
                 _stateMachine.TryRequestStop(out _);
             }
@@ -1147,20 +1243,23 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             var record = HotKeyParser.Parse(RecordHotkeyText);
             var play = HotKeyParser.Parse(PlayHotkeyText);
+            var pause = HotKeyParser.Parse(PauseHotkeyText);
             var stop = HotKeyParser.Parse(StopHotkeyText);
-            EnsureDistinctHotkeys(record, play, stop);
+            EnsureDistinctHotkeys(record, play, pause, stop);
 
-            var previous = (_recordGesture, _playGesture, _stopGesture);
+            var previous = (_recordGesture, _playGesture, _pauseGesture, _stopGesture);
             DisposeHotkeyRegistrations(throwOnFailure: true);
             try
             {
-                RegisterAllHotkeys(record, play, stop);
+                RegisterAllHotkeys(record, play, pause, stop);
                 _recordGesture = record;
                 _playGesture = play;
+                _pauseGesture = pause;
                 _stopGesture = stop;
-                _recorder.ConfigureControlGestures(record, play, stop);
+                _recorder.ConfigureControlGestures(record, play, pause, stop);
                 RecordHotkeyText = record.ToString();
                 PlayHotkeyText = play.ToString();
+                PauseHotkeyText = pause.ToString();
                 StopHotkeyText = stop.ToString();
                 _hotkeyStatusText = "Global hotkeys are active.";
                 ClearBanner();
@@ -1170,12 +1269,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 DisposeHotkeyRegistrations(throwOnFailure: false);
                 try
                 {
-                    RegisterAllHotkeys(previous._recordGesture, previous._playGesture, previous._stopGesture);
+                    RegisterAllHotkeys(previous._recordGesture, previous._playGesture, previous._pauseGesture, previous._stopGesture);
                     _recordGesture = previous._recordGesture;
                     _playGesture = previous._playGesture;
+                    _pauseGesture = previous._pauseGesture;
                     _stopGesture = previous._stopGesture;
                     RecordHotkeyText = _recordGesture.ToString();
                     PlayHotkeyText = _playGesture.ToString();
+                    PauseHotkeyText = _pauseGesture.ToString();
                     StopHotkeyText = _stopGesture.ToString();
                     _hotkeyStatusText = "The previous global hotkeys remain active.";
                 }
@@ -1190,6 +1291,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
             _settings.RecordHotkey = ToSetting(_recordGesture);
             _settings.PlayHotkey = ToSetting(_playGesture);
+            _settings.PauseHotkey = ToSetting(_pauseGesture);
             _settings.StopHotkey = ToSetting(_stopGesture);
             await _settingsService.SaveAsync(CreateSettingsSnapshot()).ConfigureAwait(true);
         }
@@ -1241,6 +1343,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _document = CreateDocumentSnapshot();
+        _document.Steps = null;
         _document.Events.RemoveAt(index);
         _history.Push(_document);
         RebuildRows(_document);
@@ -1256,6 +1359,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _document = CreateDocumentSnapshot();
+        _document.Steps = null;
         _document.Events.Clear();
         _history.Push(_document);
         RebuildRows(_document);
@@ -1282,7 +1386,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _document = CreateDocumentSnapshot();
-        _document.Events = DirectionalHoldPreset.CreateEvents(target.X, target.Y);
+        _document.Steps = MacroStepCompiler.CreateDefault(target.X, target.Y);
+        _document.Events = MacroStepCompiler.Compile(_document.Steps);
         _history.Push(_document);
         RebuildRows(_document);
         SelectedEvent = Events.FirstOrDefault();
@@ -1314,6 +1419,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _document = CreateDocumentSnapshot();
+        _document.Steps = null;
         (_document.Events[index], _document.Events[destination]) = (_document.Events[destination], _document.Events[index]);
         _history.Push(_document);
         RebuildRows(_document);
@@ -1335,6 +1441,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _document = CreateDocumentSnapshot();
+        _document.Steps = null;
         _document.Events[index] = after.DeepClone();
         _history.Push(_document);
         MarkEdited();
@@ -1344,6 +1451,96 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         _isDirty = true;
         RefreshDocumentProperties();
+    }
+
+    private void AddStep()
+    {
+        var step = new MacroStepDefinition { Action = MacroStepAction.Hold, Duration = 1, DurationUnit = DurationUnit.Seconds };
+        var model = Steps.Select(static row => row.ToModel()).ToList();
+        model.Add(step);
+        ApplySteps(model, model.Count - 1);
+    }
+
+    private void DuplicateStep()
+    {
+        if (SelectedStep is null) return;
+        var model = Steps.Select(static row => row.ToModel()).ToList();
+        var index = Steps.IndexOf(SelectedStep);
+        var copy = SelectedStep.ToModel();
+        copy.Id = Guid.NewGuid();
+        model.Insert(index + 1, copy);
+        ApplySteps(model, index + 1);
+    }
+
+    private void DeleteStep()
+    {
+        if (SelectedStep is null) return;
+        var model = Steps.Select(static row => row.ToModel()).ToList();
+        var index = Steps.IndexOf(SelectedStep);
+        model.RemoveAt(index);
+        ApplySteps(model, Math.Min(index, model.Count - 1));
+    }
+
+    private void MoveStep(int offset)
+    {
+        if (SelectedStep is null) return;
+        var model = Steps.Select(static row => row.ToModel()).ToList();
+        var index = Steps.IndexOf(SelectedStep);
+        var destination = index + offset;
+        if (destination < 0 || destination >= model.Count) return;
+        (model[index], model[destination]) = (model[destination], model[index]);
+        ApplySteps(model, destination);
+    }
+
+    private bool CanMoveStep(int offset)
+    {
+        if (!CanUseFileCommands() || SelectedStep is null) return false;
+        var destination = Steps.IndexOf(SelectedStep) + offset;
+        return destination >= 0 && destination < Steps.Count;
+    }
+
+    private async Task CaptureStepInputAsync(StepRowViewModel? row)
+    {
+        if (row is null || IsBusy) return;
+        row.IsCapturing = true;
+        try
+        {
+            var inputs = await _inputCapture.CaptureAsync().ConfigureAwait(true);
+            row.ReplaceInputs(inputs);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { SetBanner("Keybind capture failed. " + exception.Message); }
+        finally { row.IsCapturing = false; }
+    }
+
+    private void ClearStepInputs(StepRowViewModel? row) => row?.ClearInputs();
+
+    private void OnStepRowChanged(StepRowViewModel row)
+    {
+        if (_updatingRows || IsBusy) return;
+        var id = row.ToModel().Id;
+        var model = Steps.Select(static item => item.ToModel()).ToList();
+        ApplySteps(model, model.FindIndex(step => step.Id == id));
+    }
+
+    private void ApplySteps(List<MacroStepDefinition> model, int selectedIndex)
+    {
+        _document = _document.DeepClone();
+        _document.Steps = model;
+        try
+        {
+            _document.Events = model.Count == 0 ? [] : MacroStepCompiler.Compile(model);
+            ClearBanner();
+        }
+        catch (Exception exception) when (exception is ArgumentException or OverflowException)
+        {
+            _document.Events = [];
+            SetBanner("Finish configuring the step before playback: " + exception.Message);
+        }
+        _history.Push(_document);
+        RebuildRows(_document);
+        SelectedStep = selectedIndex >= 0 && selectedIndex < Steps.Count ? Steps[selectedIndex] : null;
+        MarkEdited();
     }
 
     private async Task<bool> ConfirmSafeToReplaceDocumentAsync()
@@ -1421,9 +1618,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _windowTop = settings.WindowTop;
         _recordGesture = FromSetting(settings.RecordHotkey, HotKeyGesture.RecordDefault);
         _playGesture = FromSetting(settings.PlayHotkey, HotKeyGesture.PlayDefault);
+        _pauseGesture = FromSetting(settings.PauseHotkey, HotKeyGesture.PauseDefault);
         _stopGesture = FromSetting(settings.StopHotkey, HotKeyGesture.EmergencyStopDefault);
         _recordHotkeyText = _recordGesture.ToString();
         _playHotkeyText = _playGesture.ToString();
+        _pauseHotkeyText = _pauseGesture.ToString();
         _stopHotkeyText = _stopGesture.ToString();
         _themeService.Apply(settings.Theme);
     }
@@ -1434,8 +1633,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             _hotKeyService = new GlobalHotKeyService();
             _hotKeyService.HotKeyPressed += OnHotKeyPressed;
-            RegisterAllHotkeys(_recordGesture, _playGesture, _stopGesture);
-            _recorder.ConfigureControlGestures(_recordGesture, _playGesture, _stopGesture);
+            RegisterAllHotkeys(_recordGesture, _playGesture, _pauseGesture, _stopGesture);
+            _recorder.ConfigureControlGestures(_recordGesture, _playGesture, _pauseGesture, _stopGesture);
             _hotkeyStatusText = "Global hotkeys are active.";
         }
         catch (Exception exception)
@@ -1461,19 +1660,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private void RegisterAllHotkeys(HotKeyGesture record, HotKeyGesture play, HotKeyGesture stop)
+    private void RegisterAllHotkeys(HotKeyGesture record, HotKeyGesture play, HotKeyGesture pause, HotKeyGesture stop)
     {
         if (_hotKeyService is null)
         {
             throw new InvalidOperationException("The global-hotkey service is unavailable.");
         }
 
-        EnsureDistinctHotkeys(record, play, stop);
+        EnsureDistinctHotkeys(record, play, pause, stop);
         _stopRegistration = _hotKeyService.Register("stop", stop);
         try
         {
             _recordRegistration = _hotKeyService.Register("record", record);
             _playRegistration = _hotKeyService.Register("play", play);
+            _pauseRegistration = _hotKeyService.Register("pause", pause);
         }
         catch
         {
@@ -1506,6 +1706,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 SetBanner("Recording cannot start while another operation is active.");
             }
 
+            return;
+        }
+
+        if (name == "pause")
+        {
+            if (_stateMachine.State is AppState.Playing or AppState.Paused) await PauseResumeAsync().ConfigureAwait(true);
             return;
         }
 
@@ -1592,7 +1798,10 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private MacroDocument CreateDocumentSnapshot(bool ensureDisplayLayout = false)
     {
         var snapshot = _document.DeepClone();
-        snapshot.Events = Events.Select(static row => row.ToModel()).ToList();
+        snapshot.Steps = Steps.Count == 0 ? snapshot.Steps : Steps.Select(static row => row.ToModel()).ToList();
+        snapshot.Events = snapshot.Steps is { Count: > 0 }
+            ? MacroStepCompiler.Compile(snapshot.Steps)
+            : Events.Select(static row => row.ToModel()).ToList();
         if (ensureDisplayLayout && snapshot.DisplayLayout is null)
         {
             snapshot.DisplayLayout = _displayLayouts.Capture();
@@ -1610,6 +1819,12 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             for (var index = 0; index < document.Events.Count; index++)
             {
                 Events.Add(new EventRowViewModel(document.Events[index].DeepClone(), index + 1, OnEventRowChanged));
+            }
+            Steps.Clear();
+            if (document.Steps is not null)
+            {
+                for (var index = 0; index < document.Steps.Count; index++)
+                    Steps.Add(new StepRowViewModel(document.Steps[index], index + 1, OnStepRowChanged));
             }
         }
         finally
@@ -1771,7 +1986,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                     await SaveRecoverySnapshotAsync(_document).ConfigureAwait(true);
                 }
             }
-            else if (_stateMachine.State == AppState.Playing)
+            else if (_stateMachine.State is AppState.Playing or AppState.Paused)
             {
                 await _playback.StopAsync().ConfigureAwait(true);
             }
@@ -1868,6 +2083,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(Theme));
         OnPropertyChanged(nameof(RecordHotkeyText));
         OnPropertyChanged(nameof(PlayHotkeyText));
+        OnPropertyChanged(nameof(PauseHotkeyText));
         OnPropertyChanged(nameof(StopHotkeyText));
         OnPropertyChanged(nameof(HotkeyStatusText));
     }
@@ -1876,6 +2092,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         OnPropertyChanged(nameof(IsRecording));
         OnPropertyChanged(nameof(IsPlaying));
+        OnPropertyChanged(nameof(IsPaused));
+        OnPropertyChanged(nameof(PauseResumeLabel));
         OnPropertyChanged(nameof(IsBusy));
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StateBrush));
@@ -1910,6 +2128,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RecordCommand.RaiseCanExecuteChanged();
         PlayCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
+        PauseResumeCommand.RaiseCanExecuteChanged();
         ExportCommand.RaiseCanExecuteChanged();
         ApplyHotkeysCommand.RaiseCanExecuteChanged();
         SaveProfileCommand.RaiseCanExecuteChanged();
@@ -1924,13 +2143,20 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         CreateDirectionalHoldPresetCommand.RaiseCanExecuteChanged();
         MoveEventUpCommand.RaiseCanExecuteChanged();
         MoveEventDownCommand.RaiseCanExecuteChanged();
+        AddStepCommand.RaiseCanExecuteChanged();
+        DuplicateStepCommand.RaiseCanExecuteChanged();
+        DeleteStepCommand.RaiseCanExecuteChanged();
+        MoveStepUpCommand.RaiseCanExecuteChanged();
+        MoveStepDownCommand.RaiseCanExecuteChanged();
+        RecordKeybindCommand.RaiseCanExecuteChanged();
+        ClearKeybindCommand.RaiseCanExecuteChanged();
     }
 
     private bool CanUseFileCommands() => _initialized && !IsBusy && _stateMachine.State == AppState.Idle;
     private bool CanSave() => CanUseFileCommands() && (_isDirty || Events.Count > 0);
     private bool CanRecord() => _initialized && !IsCountingDown && _stateMachine.State is AppState.Idle or AppState.Recording;
     private bool CanPlay() => CanUseFileCommands() && Events.Any(static row => row.IsEnabled) && _stopRegistration is not null;
-    private bool CanStop() => IsCountingDown || _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Stopping;
+    private bool CanStop() => IsCountingDown || _stateMachine.State is AppState.Recording or AppState.Playing or AppState.Paused or AppState.Stopping;
     private bool CanExport() => CanUseFileCommands() && Events.Count > 0;
     private bool CanSaveProfile() => CanUseFileCommands() && Events.Count > 0 && IsValidProfileName(ProfileName);
     private bool CanUseSelectedProfile() => CanUseFileCommands() && FindProfileName(ProfileName) is not null;
@@ -2015,6 +2241,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RecentMacroPath = _settings.RecentMacroPath,
         RecordHotkey = ToSetting(_recordGesture),
         PlayHotkey = ToSetting(_playGesture),
+        PauseHotkey = ToSetting(_pauseGesture),
         StopHotkey = ToSetting(_stopGesture),
     };
 
@@ -2040,7 +2267,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void DisposeHotkeyRegistrations(bool throwOnFailure)
     {
         List<Exception>? failures = null;
-        foreach (var registration in new[] { _recordRegistration, _playRegistration, _stopRegistration })
+        foreach (var registration in new[] { _recordRegistration, _playRegistration, _pauseRegistration, _stopRegistration })
         {
             try
             {
@@ -2055,6 +2282,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         _recordRegistration = null;
         _playRegistration = null;
+        _pauseRegistration = null;
         _stopRegistration = null;
         if (throwOnFailure && failures is not null)
         {
@@ -2080,18 +2308,22 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             try
             {
-                _playback.Dispose();
+                _inputCapture.Dispose();
             }
             finally
             {
                 try
                 {
-                    _cursorLock.Dispose();
+                    _playback.Dispose();
                 }
                 finally
                 {
-                    _themeService.ThemeChanged -= OnThemeChanged;
-                    _themeService.Dispose();
+                    try { _cursorLock.Dispose(); }
+                    finally
+                    {
+                        _themeService.ThemeChanged -= OnThemeChanged;
+                        _themeService.Dispose();
+                    }
                 }
             }
         }

@@ -103,6 +103,16 @@ public static class MacroValidator
             }
         }
 
+
+        if (document.Steps is not null)
+        {
+            try { _ = MacroStepCompiler.Compile(document.Steps); }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                issues.Add(new("$.steps", exception.Message));
+            }
+        }
+
         if (document.DisplayLayout is null)
         {
             issues.Add(new("$.displayLayout", "Display layout metadata is required."));

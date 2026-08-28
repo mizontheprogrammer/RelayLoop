@@ -10,6 +10,26 @@ namespace RelayLoop.IntegrationTests;
 public sealed class InputServicesTests
 {
     [Fact]
+    public async Task KeybindCapture_RecordsKeyboardAndMouseCombination()
+    {
+        FakeInputSource source = new();
+        using InputBindingCaptureService capture = new(source);
+        var task = capture.CaptureAsync();
+        source.RaiseKeyboard(KeyboardWindowMessage.KeyDown, 0x11, 0x1D);
+        source.RaiseKeyboard(KeyboardWindowMessage.KeyDown, 0x57, 0x11);
+        source.RaiseMouse(MouseWindowMessage.LeftButtonDown, 10, 20);
+        source.RaiseKeyboard(KeyboardWindowMessage.KeyUp, 0x57, 0x11);
+        source.RaiseMouse(MouseWindowMessage.LeftButtonUp, 10, 20);
+        source.RaiseKeyboard(KeyboardWindowMessage.KeyUp, 0x11, 0x1D);
+
+        var result = await task;
+        Assert.Equal(3, result.Count);
+        Assert.Contains(result, input => input.Kind == MacroInputKind.Keyboard && input.VirtualKey == 0x11);
+        Assert.Contains(result, input => input.Kind == MacroInputKind.Keyboard && input.VirtualKey == 0x57);
+        Assert.Contains(result, input => input.Kind == MacroInputKind.MouseButton && input.Button == MouseButton.Left);
+        Assert.False(source.IsRunning);
+    }
+    [Fact]
     public void Recorder_CapturesTimedMouseAndKeyboardSequence()
     {
         FakeInputSource source = new();
@@ -176,6 +196,36 @@ public sealed class InputServicesTests
     }
 
     [Fact]
+    public async Task Playback_PauseReleasesHeldChord_ResumeReholds_AndEmergencyStopCleansUp()
+    {
+        FakeInjector injector = new();
+        await using InputPlaybackService playback = new(injector);
+        Task running = playback.PlayAsync(
+            [
+                new MacroEvent { Kind = MacroEventKind.KeyDown, VirtualKey = 0x57, ScanCode = 0x11 },
+                new MacroEvent { Kind = MacroEventKind.MouseButtonDown, Button = MouseButton.Left, X = 20, Y = 30 },
+                new MacroEvent { Kind = MacroEventKind.MouseButtonUp, Button = MouseButton.Left, X = 20, Y = 30, DelayMicroseconds = 10_000_000 },
+                new MacroEvent { Kind = MacroEventKind.KeyUp, VirtualKey = 0x57, ScanCode = 0x11 },
+            ], new AppPlaybackOptions());
+        await injector.FirstInjection.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        while (injector.Injected.Count < 2) await Task.Yield();
+
+        await playback.PauseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(playback.IsPaused);
+        Assert.Contains(injector.ReleasedKeys, key => key.VirtualKey == 0x57);
+        Assert.Contains(MouseButton.Left, injector.ReleasedButtons);
+
+        var injectedBeforeResume = injector.Injected.Count;
+        playback.Resume();
+        await Task.Delay(50);
+        Assert.True(injector.Injected.Count >= injectedBeforeResume + 2);
+
+        await playback.StopAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
+        Assert.False(playback.IsPlaying);
+    }
+
+    [Fact]
     public async Task Playback_ReleaseFailureFaultsTask()
     {
         FakeInjector injector = new() { FailKeyRelease = true };
@@ -333,6 +383,7 @@ public sealed class InputServicesTests
         public List<long> WaitTargets { get; } = [];
         public long GetTimestamp() => 0;
         public long AddMicroseconds(long timestamp, double microseconds) => timestamp + (long)Math.Round(microseconds);
+        public double GetElapsedMicroseconds(long startTimestamp, long endTimestamp) => Math.Max(0, endTimestamp - startTimestamp);
         public ValueTask WaitUntilAsync(long targetTimestamp, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();

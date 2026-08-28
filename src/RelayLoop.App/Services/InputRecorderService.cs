@@ -24,6 +24,7 @@ public interface IInputRecorderService : IDisposable
     void ConfigureControlGestures(
         HotKeyGesture recordGesture,
         HotKeyGesture playGesture,
+        HotKeyGesture pauseGesture,
         HotKeyGesture emergencyStopGesture);
 }
 
@@ -71,6 +72,7 @@ public sealed class InputRecorderService : IInputRecorderService
     private readonly int _maximumEventCount;
     private HotKeyGesture _recordGesture;
     private HotKeyGesture _playGesture;
+    private HotKeyGesture _pauseGesture;
     private HotKeyGesture _emergencyStopGesture;
     private bool _recording;
     private bool _disposed;
@@ -98,6 +100,7 @@ public sealed class InputRecorderService : IInputRecorderService
         _maximumEventCount = maximumEventCount;
         _recordGesture = HotKeyGesture.RecordDefault;
         _playGesture = HotKeyGesture.PlayDefault;
+        _pauseGesture = HotKeyGesture.PauseDefault;
         _emergencyStopGesture = emergencyStopGesture ?? HotKeyGesture.EmergencyStopDefault;
         ValidateGesture(_recordGesture);
         ValidateGesture(_playGesture);
@@ -172,10 +175,12 @@ public sealed class InputRecorderService : IInputRecorderService
     public void ConfigureControlGestures(
         HotKeyGesture recordGesture,
         HotKeyGesture playGesture,
+        HotKeyGesture pauseGesture,
         HotKeyGesture emergencyStopGesture)
     {
         ValidateGesture(recordGesture);
         ValidateGesture(playGesture);
+        ValidateGesture(pauseGesture);
         ValidateGesture(emergencyStopGesture);
         lock (_gate)
         {
@@ -186,6 +191,7 @@ public sealed class InputRecorderService : IInputRecorderService
 
             _recordGesture = recordGesture;
             _playGesture = playGesture;
+            _pauseGesture = pauseGesture;
             _emergencyStopGesture = emergencyStopGesture;
         }
     }
@@ -690,6 +696,13 @@ public sealed class InputRecorderService : IInputRecorderService
             return true;
         }
 
+        if (MatchesGestureLocked(_pauseGesture, virtualKey))
+        {
+            kind = ControlGestureKind.Pause;
+            gesture = _pauseGesture;
+            return true;
+        }
+
         kind = default;
         gesture = default;
         return false;
@@ -701,6 +714,7 @@ public sealed class InputRecorderService : IInputRecorderService
     private bool IsConfiguredControlModifierLocked(uint virtualKey) =>
         IsRequiredModifier(_recordGesture.Modifiers, virtualKey) ||
         IsRequiredModifier(_playGesture.Modifiers, virtualKey) ||
+        IsRequiredModifier(_pauseGesture.Modifiers, virtualKey) ||
         IsRequiredModifier(_emergencyStopGesture.Modifiers, virtualKey);
 
     private static bool IsRequiredModifier(HotKeyModifiers modifiers, uint virtualKey) =>
@@ -809,6 +823,7 @@ public sealed class InputRecorderService : IInputRecorderService
     {
         RecordToggle,
         Play,
+        Pause,
         EmergencyStop,
     }
 }

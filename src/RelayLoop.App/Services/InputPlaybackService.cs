@@ -61,6 +61,8 @@ public interface IPlaybackTiming
     long AddMicroseconds(long timestamp, double microseconds);
 
     ValueTask WaitUntilAsync(long targetTimestamp, CancellationToken cancellationToken);
+
+    double GetElapsedMicroseconds(long startTimestamp, long endTimestamp);
 }
 
 /// <summary>A cancellable monotonic scheduler with a short final yield/spin for sub-timer precision.</summary>
@@ -115,6 +117,9 @@ public sealed class StopwatchPlaybackTiming : IPlaybackTiming
             }
         }
     }
+
+    public double GetElapsedMicroseconds(long startTimestamp, long endTimestamp) =>
+        Math.Max(0, endTimestamp - startTimestamp) * 1_000_000d / Stopwatch.Frequency;
 }
 
 public interface IInputPlaybackService : IDisposable, IAsyncDisposable
@@ -124,6 +129,7 @@ public interface IInputPlaybackService : IDisposable, IAsyncDisposable
     event EventHandler<PlaybackCompletedEventArgs>? PlaybackCompleted;
 
     bool IsPlaying { get; }
+    bool IsPaused { get; }
 
     Task PlayAsync(
         IReadOnlyList<MacroEvent> macroEvents,
@@ -131,6 +137,8 @@ public interface IInputPlaybackService : IDisposable, IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     Task StopAsync();
+    Task PauseAsync();
+    void Resume();
 }
 
 /// <summary>
@@ -146,6 +154,10 @@ public sealed class InputPlaybackService : IInputPlaybackService
     private readonly HashSet<MouseButton> _pendingReleaseButtons = [];
     private CancellationTokenSource? _activeCancellation;
     private Task? _activeTask;
+    private CancellationTokenSource? _activeWaitCancellation;
+    private TaskCompletionSource<bool>? _resumeSignal;
+    private TaskCompletionSource<bool>? _pausedSignal;
+    private bool _pauseRequested;
     private bool _disposed;
 
     public InputPlaybackService(IInputInjector injector, IPlaybackTiming? timing = null)
@@ -167,6 +179,41 @@ public sealed class InputPlaybackService : IInputPlaybackService
                 return _activeTask is { IsCompleted: false };
             }
         }
+    }
+
+    public bool IsPaused { get { lock (_gate) return _pauseRequested && _activeTask is { IsCompleted: false }; } }
+
+    public async Task PauseAsync()
+    {
+        Task signal;
+        lock (_gate)
+        {
+            if (_activeTask is not { IsCompleted: false }) return;
+            if (_pauseRequested) { signal = _pausedSignal?.Task ?? Task.CompletedTask; }
+            else
+            {
+                _pauseRequested = true;
+                _pausedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _resumeSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _activeWaitCancellation?.Cancel();
+                signal = _pausedSignal.Task;
+            }
+        }
+        await signal.ConfigureAwait(false);
+    }
+
+    public void Resume()
+    {
+        TaskCompletionSource<bool>? resume;
+        lock (_gate)
+        {
+            if (!_pauseRequested) return;
+            _pauseRequested = false;
+            resume = _resumeSignal;
+            _resumeSignal = null;
+            _pausedSignal = null;
+        }
+        resume?.TrySetResult(true);
     }
 
     public Task PlayAsync(
@@ -194,6 +241,7 @@ public sealed class InputPlaybackService : IInputPlaybackService
 
             _activeCancellation?.Dispose();
             _activeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _pauseRequested = false;
             var activeCancellation = _activeCancellation;
             var optionsSnapshot = options with { };
             _activeTask = Task.Run(
@@ -225,6 +273,7 @@ public sealed class InputPlaybackService : IInputPlaybackService
             else
             {
                 cancellation?.Cancel();
+                _resumeSignal?.TrySetResult(true);
             }
         }
 
@@ -313,8 +362,8 @@ public sealed class InputPlaybackService : IInputPlaybackService
         PlaybackOptions options,
         CancellationToken cancellationToken)
     {
-        var heldKeys = new HashSet<HeldKey>();
-        var heldButtons = new HashSet<MouseButton>();
+        var heldKeys = new Dictionary<HeldKey, MacroEvent>();
+        var heldButtons = new Dictionary<MouseButton, MacroEvent>();
         Exception? failure = null;
         var wasCancelled = false;
 
@@ -346,7 +395,7 @@ public sealed class InputPlaybackService : IInputPlaybackService
                     targetTimestamp = _timing.AddMicroseconds(
                         targetTimestamp,
                         macroEvent.DelayMicroseconds / options.Speed);
-                    await _timing.WaitUntilAsync(targetTimestamp, cancellationToken).ConfigureAwait(false);
+                    targetTimestamp = await WaitWithPauseAsync(targetTimestamp, heldKeys, heldButtons, cancellationToken).ConfigureAwait(false);
 
                     if (!macroEvent.Enabled)
                     {
@@ -394,6 +443,12 @@ public sealed class InputPlaybackService : IInputPlaybackService
         }
         finally
         {
+            lock (_gate)
+            {
+                _pausedSignal?.TrySetResult(true);
+                _resumeSignal?.TrySetResult(true);
+                _pauseRequested = false;
+            }
             var releaseFailure = ReleaseHeldInputs(heldKeys, heldButtons);
             if (releaseFailure is not null)
             {
@@ -408,6 +463,67 @@ public sealed class InputPlaybackService : IInputPlaybackService
         if (failure is not null)
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    private async ValueTask<long> WaitWithPauseAsync(
+        long targetTimestamp,
+        IDictionary<HeldKey, MacroEvent> heldKeys,
+        IDictionary<MouseButton, MacroEvent> heldButtons,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            CancellationTokenSource waitCancellation;
+            Task? resumeTask = null;
+            lock (_gate)
+            {
+                if (_pauseRequested)
+                {
+                    resumeTask = _resumeSignal?.Task ?? Task.CompletedTask;
+                }
+                waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _activeWaitCancellation = waitCancellation;
+            }
+
+            try
+            {
+                if (resumeTask is null)
+                {
+                    await _timing.WaitUntilAsync(targetTimestamp, waitCancellation.Token).ConfigureAwait(false);
+                    return targetTimestamp;
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Pause requested while the scheduler was waiting.
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    if (ReferenceEquals(_activeWaitCancellation, waitCancellation)) _activeWaitCancellation = null;
+                }
+                waitCancellation.Dispose();
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_gate) { resumeTask = _resumeSignal?.Task ?? Task.CompletedTask; }
+            var pausedAt = _timing.GetTimestamp();
+            var remainingMicroseconds = Math.Max(0, _timing.GetElapsedMicroseconds(pausedAt, targetTimestamp));
+            var keyDowns = heldKeys.Values.Select(static item => item.DeepClone()).ToArray();
+            var buttonDowns = heldButtons.Values.Select(static item => item.DeepClone()).ToArray();
+            var releaseFailure = ReleaseHeldInputs(heldKeys, heldButtons);
+            if (releaseFailure is not null) throw releaseFailure;
+            lock (_gate) { _pausedSignal?.TrySetResult(true); }
+            await resumeTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            foreach (var input in keyDowns.Concat(buttonDowns))
+            {
+                _injector.Inject(input);
+                UpdateHeldState(input, heldKeys, heldButtons);
+            }
+            targetTimestamp = _timing.AddMicroseconds(_timing.GetTimestamp(), remainingMicroseconds);
         }
     }
 
@@ -467,20 +583,20 @@ public sealed class InputPlaybackService : IInputPlaybackService
 
     private static void UpdateHeldState(
         MacroEvent macroEvent,
-        ISet<HeldKey> heldKeys,
-        ISet<MouseButton> heldButtons)
+        IDictionary<HeldKey, MacroEvent> heldKeys,
+        IDictionary<MouseButton, MacroEvent> heldButtons)
     {
         var key = new HeldKey(macroEvent.VirtualKey, macroEvent.ScanCode, macroEvent.IsExtendedKey);
         switch (macroEvent.Kind)
         {
             case MacroEventKind.KeyDown:
-                heldKeys.Add(key);
+                heldKeys[key] = macroEvent.DeepClone();
                 break;
             case MacroEventKind.KeyUp:
                 heldKeys.Remove(key);
                 break;
             case MacroEventKind.MouseButtonDown:
-                heldButtons.Add(macroEvent.Button);
+                heldButtons[macroEvent.Button] = macroEvent.DeepClone();
                 break;
             case MacroEventKind.MouseButtonUp:
                 heldButtons.Remove(macroEvent.Button);
@@ -489,11 +605,11 @@ public sealed class InputPlaybackService : IInputPlaybackService
     }
 
     private Exception? ReleaseHeldInputs(
-        ISet<HeldKey> heldKeys,
-        ISet<MouseButton> heldButtons)
+        IDictionary<HeldKey, MacroEvent> heldKeys,
+        IDictionary<MouseButton, MacroEvent> heldButtons)
     {
         List<Exception>? failures = null;
-        foreach (var key in heldKeys.Reverse().ToArray())
+        foreach (var key in heldKeys.Keys.Reverse().ToArray())
         {
             try
             {
@@ -506,7 +622,7 @@ public sealed class InputPlaybackService : IInputPlaybackService
             }
         }
 
-        foreach (var button in heldButtons.Reverse().ToArray())
+        foreach (var button in heldButtons.Keys.Reverse().ToArray())
         {
             try
             {
@@ -521,8 +637,8 @@ public sealed class InputPlaybackService : IInputPlaybackService
 
         lock (_gate)
         {
-            _pendingReleaseKeys.UnionWith(heldKeys);
-            _pendingReleaseButtons.UnionWith(heldButtons);
+            _pendingReleaseKeys.UnionWith(heldKeys.Keys);
+            _pendingReleaseButtons.UnionWith(heldButtons.Keys);
         }
 
         return failures is null

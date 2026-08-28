@@ -96,4 +96,19 @@ public sealed class AppStateMachineTests
         Assert.Equal(AppState.Stopping, machine.State);
         Assert.NotNull(reason);
     }
+
+    [Fact]
+    public void Playback_CanPauseResumeAndStopWhilePaused()
+    {
+        var machine = new AppStateMachine();
+        machine.BeginPlayback();
+        Assert.True(machine.TryPause(out _));
+        Assert.Equal(AppState.Paused, machine.State);
+        Assert.True(machine.TryResume(out _));
+        Assert.Equal(AppState.Playing, machine.State);
+        Assert.True(machine.TryPause(out _));
+        Assert.True(machine.TryRequestStop(out _));
+        machine.CompleteStop();
+        Assert.Equal(AppState.Idle, machine.State);
+    }
 }
