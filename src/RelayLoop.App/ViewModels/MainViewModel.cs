@@ -505,10 +505,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
                 await TryLoadRecentMacroAsync().ConfigureAwait(true);
             }
 
-            if (_currentPath is null && _document.Events.Count == 0)
-            {
-                await LoadOrCreateDefaultProfileAsync().ConfigureAwait(true);
-            }
+            await EnsureDefaultProfileAsync(
+                load: _currentPath is null && _document.Events.Count == 0).ConfigureAwait(true);
 
             if (_disposed)
             {
@@ -909,7 +907,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task LoadOrCreateDefaultProfileAsync()
+    private async Task EnsureDefaultProfileAsync(bool load)
     {
         const string name = "Default D-A Hold";
         MacroProfile profile;
@@ -929,11 +927,14 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             await _profileService.SaveAsync(profile).ConfigureAwait(true);
             await RefreshProfileNamesAsync().ConfigureAwait(true);
         }
-        AdoptDocument(profile.Document, null, isDirty: false);
-        ContinuousPlayback = profile.ContinuousPlayback;
-        RepeatCount = profile.RepeatCount;
-        ProfileName = name;
-        ProfileStatusText = "Loaded the editable default D/A profile.";
+        if (load)
+        {
+            AdoptDocument(profile.Document, null, isDirty: false);
+            ContinuousPlayback = profile.ContinuousPlayback;
+            RepeatCount = profile.RepeatCount;
+            ProfileName = name;
+            ProfileStatusText = "Loaded the editable default D/A profile.";
+        }
     }
 
     private async Task ToggleRecordingAsync()
